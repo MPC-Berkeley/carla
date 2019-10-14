@@ -9,7 +9,7 @@
 # documented example, please take a look at tutorial.py.
 
 """
-Welcome to CARLA manual control with steering wheel Logitech G29.
+Welcome to CARLA manual control with steering wheel Logitech G27.
 
 To drive start by preshing the brake pedal.
 Change your wheel_config.ini according to your steering wheel.
@@ -45,7 +45,7 @@ except IndexError:
 
 
 import carla
-
+import pdb
 from carla import ColorConverter as cc
 
 import argparse
@@ -94,6 +94,10 @@ try:
     from pygame.locals import K_r
     from pygame.locals import K_s
     from pygame.locals import K_w
+    from pygame.locals import K_o
+    from pygame.locals import K_i,K_LSHIFT,K_MINUS,K_EQUALS
+    from pygame.locals import K_q,K_e,K_PLUS
+    from pygame.locals import K_KP1,K_KP2,K_KP3,K_KP4,K_KP5,K_KP6,K_KP7,K_KP8,K_KP9,K_KP_PERIOD,K_KP0
 except ImportError:
     raise RuntimeError('cannot import pygame, make sure pygame package is installed')
 
@@ -120,7 +124,7 @@ def get_actor_display_name(actor, truncate=250):
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
 
-# ==============================================================================
+# =================================================================================
 # -- World ---------------------------------------------------------------------
 # ==============================================================================
 
@@ -192,7 +196,8 @@ class World(object):
             self.collision_sensor.sensor,
             self.lane_invasion_sensor.sensor,
             self.gnss_sensor.sensor,
-            self.player]
+            self.player,
+            self.camera_manager.sensor2]
         for actor in actors:
             if actor is not None:
                 actor.destroy()
@@ -208,6 +213,7 @@ class DualControl(object):
         self._autopilot_enabled = start_in_autopilot
         if isinstance(world.player, carla.Vehicle):
             self._control = carla.VehicleControl()
+     
             world.player.set_autopilot(self._autopilot_enabled)
         elif isinstance(world.player, carla.Walker):
             self._control = carla.WalkerControl()
@@ -230,19 +236,177 @@ class DualControl(object):
 
         self._parser = ConfigParser()
         self._parser.read('wheel_config.ini')
+        self._steer_idx = int(0)
+        self._throttle_idx = int(2)
+        self._brake_idx = int(3)
+        self._reverse_idx = int(5)
+        self._handbrake_idx = int(4)
+        '''
         self._steer_idx = int(
-            self._parser.get('G29 Racing Wheel', 'steering_wheel'))
+            self._parser.get('G27 Racing Wheel', 'steering_wheel'))
         self._throttle_idx = int(
-            self._parser.get('G29 Racing Wheel', 'throttle'))
-        self._brake_idx = int(self._parser.get('G29 Racing Wheel', 'brake'))
-        self._reverse_idx = int(self._parser.get('G29 Racing Wheel', 'reverse'))
+            self._parser.get('G27 Racing Wheel', 'throttle'))
+        self._brake_idx = int(self._parser.get('G27 Racing Wheel', 'brake'))
+        self._reverse_idx = int(self._parser.get('G27 Racing Wheel', 'reverse'))
         self._handbrake_idx = int(
-            self._parser.get('G29 Racing Wheel', 'handbrake'))
-
+            self._parser.get('G27 Racing Wheel', 'handbrake'))
+        '''
+        
     def parse_events(self, world, clock):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
+
+            if event.type == pygame.KEYDOWN:
+                dx = 0.05
+                da = 1
+
+                # Move camera forward and backwards
+                if event.key == K_KP8:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].location.x+=dx
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].location)
+                if event.key == K_KP2:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].location.x-=dx
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].location)
+                # Move camera up and down
+                if event.key == K_KP9:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].location.z+=dx
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].location)
+                if event.key == K_KP7:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].location.z-=dx
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].location)
+                # Move camera right and left
+                if event.key == K_KP6:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].location.y+=dx
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].location)
+                if event.key == K_KP4:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].location.y-=dx
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].location)
+                # Pitch camera down and up
+                if event.key == K_KP_PERIOD:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].rotation.pitch-=da
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].rotation)
+                if event.key == K_KP0:
+                    cm = world.camera_manager
+                    index = cm.transform_index
+                    world.camera_manager._camera_transforms[index].rotation.pitch+=da
+                    world.camera_manager.toggle_camera()
+                    world.camera_manager.toggle_camera()
+                    print(world.camera_manager._camera_transforms[index].rotation)
+                # Inc. or dec. camera FOV
+                if event.key == K_KP1:
+                    fov = world.camera_manager.sensors[0][-1].get_attribute('fov').as_float()
+                    world.camera_manager.sensors[0][-1].set_attribute('fov',str(fov+1))
+                    index = world.camera_manager.index
+                    world.camera_manager.set_sensor(index+1)
+                    world.camera_manager.set_sensor(index)
+                    print('fov',fov)
+                if event.key == K_KP3:
+                    fov = world.camera_manager.sensors[0][-1].get_attribute('fov').as_float()
+                    world.camera_manager.sensors[0][-1].set_attribute('fov',str(fov-1))
+                    index = world.camera_manager.index
+                    world.camera_manager.set_sensor(index+1)
+                    world.camera_manager.set_sensor(index)
+                    print('fov',fov)
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == K_w:
+                    cm = world.camera_manager
+                    cm.sy -= 5
+                    cm.print_sensor2()
+                if event.key == K_s:
+                    cm = world.camera_manager
+                    cm.sy += 5
+                    cm.print_sensor2()
+                if event.key == K_a:
+                    cm = world.camera_manager
+                    cm.sx -= 5
+                    cm.print_sensor2()
+                if event.key == K_d:
+                    cm = world.camera_manager
+                    cm.sx += 5
+                    cm.print_sensor2()
+                if event.key == K_q:
+                    cm = world.camera_manager
+                    world.camera_manager._camera_transforms2.location.z-=0.5
+                    cm.sensor2.set_transform(cm._camera_transforms2)
+                    print(world.camera_manager._camera_transforms2.location)
+                if event.key == K_e:
+                    cm = world.camera_manager
+                    cm._camera_transforms2.location.z+=0.5
+                    cm.sensor2.set_transform(cm._camera_transforms2)
+                    print(world.camera_manager._camera_transforms2.location)
+                if event.key == K_UP:
+                    cm = world.camera_manager
+                    h = cm.sensors2[0][-1].get_attribute('image_size_y').as_int()
+                    cm.h = h-5
+                    cm.sensors2[0][-1].set_attribute('image_size_y',str(cm.h))
+                    world.camera_manager.set_sensor(cm.index)
+                    cm.print_sensor2()
+                if event.key == K_DOWN:
+                    cm = world.camera_manager
+                    h = cm.sensors2[0][-1].get_attribute('image_size_y').as_int()
+                    cm.h = h+5
+                    cm.sensors2[0][-1].set_attribute('image_size_y',str(cm.h))
+                    world.camera_manager.set_sensor(cm.index)
+                    cm.print_sensor2()
+                if event.key == K_LEFT:
+                    cm = world.camera_manager
+                    w = cm.sensors2[0][-1].get_attribute('image_size_x').as_int()
+                    cm.w = w-5
+                    cm.sensors2[0][-1].set_attribute('image_size_x',str(cm.w))
+                    world.camera_manager.set_sensor(cm.index)
+                    cm.print_sensor2()
+                if event.key == K_RIGHT:
+                    cm = world.camera_manager
+                    w = cm.sensors2[0][-1].get_attribute('image_size_x').as_int()
+                    cm.w = w + 5
+                    cm.sensors2[0][-1].set_attribute('image_size_x',str(cm.w))
+                    world.camera_manager.set_sensor(cm.index)
+                    cm.print_sensor2()
+                if event.key == K_EQUALS:
+                    cm = world.camera_manager
+                    w = cm.sensors2[0][-1].get_attribute('fov').as_float()
+                    cm.w = w + 5
+                    cm.sensors2[0][-1].set_attribute('fov',str(cm.w))
+                    world.camera_manager.set_sensor(cm.index)
+                    print('Fov uppercamera',cm.w)
+                if event.key == K_MINUS:
+                    cm = world.camera_manager
+                    w = cm.sensors2[0][-1].get_attribute('fov').as_float()
+                    cm.w = w - 5
+                    cm.sensors2[0][-1].set_attribute('fov',str(cm.w))
+                    world.camera_manager.set_sensor(cm.index)
+                    print('Fov uppercamera',cm.w)
+
             elif event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 0:
                     world.restart()
@@ -254,9 +418,25 @@ class DualControl(object):
                     world.next_weather()
                 elif event.button == self._reverse_idx:
                     self._control.gear = 1 if self._control.reverse else -1
+                elif event.button == 14:
+                    self._control.reverse = False
+                    self._control.gear = 1
+                    self._control.manual_gear_shift = False
+                elif event.button == 15:
+                    self._control.reverse = True
+                    self._control.gear = -1
+                    self._control.manual_gear_shift = False
+                  
                 elif event.button == 23:
                     world.camera_manager.next_sensor()
 
+            elif event.type == pygame.JOYBUTTONUP:
+                if event.button == 14 or event.button == 15:
+                    self._control.gear = 0         
+                    self._control.reverse = False 
+                    self._control.manual_gear_shift = True
+                if event.button == 7:
+                    world.camera_manager.toggle_camera()
             elif event.type == pygame.KEYUP:
                 if self._is_quit_shortcut(event.key):
                     return True
@@ -287,9 +467,9 @@ class DualControl(object):
                         world.hud.notification('%s Transmission' %
                                                ('Manual' if self._control.manual_gear_shift else 'Automatic'))
                     elif self._control.manual_gear_shift and event.key == K_COMMA:
-                        self._control.gear = max(-1, self._control.gear - 1)
+                       self._control.gear = max(-1, self._control.gear - 1)
                     elif self._control.manual_gear_shift and event.key == K_PERIOD:
-                        self._control.gear = self._control.gear + 1
+                       self._control.gear = self._control.gear + 1
                     elif event.key == K_p:
                         self._autopilot_enabled = not self._autopilot_enabled
                         world.player.set_autopilot(self._autopilot_enabled)
@@ -327,14 +507,17 @@ class DualControl(object):
 
         # Custom function to map range of inputs [1, -1] to outputs [0, 1] i.e 1 from inputs means nothing is pressed
         # For the steering, it seems fine as it is
-        K1 = 1.0  # 0.55
-        steerCmd = K1 * math.tan(1.1 * jsInputs[self._steer_idx])
-
+        K1 = 0.55
+        #steerCmd = K1 * math.tan(1.1 * jsInputs[self._steer_idx])
+        maxSteerCar = 450 / 14.8
+        maxSteerVehicle =  58.98
+        ratio = maxSteerCar / maxSteerVehicle
+        steerCmd = jsInputs[self._steer_idx] * ratio
         K2 = 1.6  # 1.6
-        throttleCmd = K2 + (2.05 * math.log10(
-            -0.7 * jsInputs[self._throttle_idx] + 1.4) - 1.2) / 0.92
-        if throttleCmd <= 0:
-            throttleCmd = 0
+        throttleCmd = (K2 + (2.05 * math.log10(
+            -0.7 * jsInputs[self._throttle_idx] + 1.4) - 1.2) / 0.92)
+        if throttleCmd <= 0.3:
+            throttleCmd = 0.3
         elif throttleCmd > 1:
             throttleCmd = 1
 
@@ -344,6 +527,8 @@ class DualControl(object):
             brakeCmd = 0
         elif brakeCmd > 1:
             brakeCmd = 1
+
+
 
         self._control.steer = steerCmd
         self._control.brake = brakeCmd
@@ -423,8 +608,8 @@ class HUD(object):
             'Server:  % 16.0f FPS' % self.server_fps,
             'Client:  % 16.0f FPS' % clock.get_fps(),
             '',
-            'Vehicle: % 20s' % get_actor_display_name(world.player, truncate=20),
-            'Map:     % 20s' % world.world.map_name,
+            'Vehicle: % 20s' % get_actor_display_name(world.player, truncate=20), \
+            #'Map:     % 20s' % world.world.map_name,
             'Simulation time: % 12s' % datetime.timedelta(seconds=int(self.simulation_time)),
             '',
             'Speed:   % 15.0f km/h' % (3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)),
@@ -442,6 +627,7 @@ class HUD(object):
                 ('Hand brake:', c.hand_brake),
                 ('Manual:', c.manual_gear_shift),
                 'Gear:        %s' % {-1: 'R', 0: 'N'}.get(c.gear, c.gear)]
+          
         elif isinstance(c, carla.WalkerControl):
             self._info_text += [
                 ('Speed:', c.speed, 0.0, 5.556),
@@ -674,8 +860,9 @@ class CameraManager(object):
         self.hud = hud
         self.recording = False
         self._camera_transforms = [
-            carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
-            carla.Transform(carla.Location(x=1.6, z=1.7))]
+            carla.Transform(carla.Location(x=-2.5, z=2.0), carla.Rotation(pitch=-15)),
+            carla.Transform(carla.Location(x=0.10, y=-0.32125, z=1.35),carla.Rotation(pitch=-10)),
+            ]
         self.transform_index = 1
         self.sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
@@ -693,10 +880,31 @@ class CameraManager(object):
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(hud.dim[0]))
                 bp.set_attribute('image_size_y', str(hud.dim[1]))
+                bp.set_attribute('fov', '90')
             elif item[0].startswith('sensor.lidar'):
                 bp.set_attribute('range', '5000')
             item.append(bp)
         self.index = None
+
+        self._camera_transforms2 = carla.Transform(carla.Location(x=0.0, y=0, z=3.5),carla.Rotation(pitch=-90))
+        self.sensor2 = None
+        self.surface2 = None
+
+        self.sx = 0.7760417 * hud.dim[0]; self.sy = 0.6564855 * hud.dim[1]
+        self.w = 0.11198 * hud.dim[0]; self.h = 0.281481 * hud.dim[1]
+        self.index2 = 0
+        self.sensors2 = [
+            ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
+            ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
+                'Camera Semantic Segmentation (CityScapes Palette)']
+            ]
+        for item in self.sensors2:
+            bp = bp_library.find(item[0])
+            if item[0].startswith('sensor.camera'):
+                bp.set_attribute('image_size_x', str(self.w))
+                bp.set_attribute('image_size_y', str(self.h))
+                bp.set_attribute('fov', '120')
+            item.append(bp)
 
     def toggle_camera(self):
         self.transform_index = (self.transform_index + 1) % len(self._camera_transforms)
@@ -710,6 +918,7 @@ class CameraManager(object):
             if self.sensor is not None:
                 self.sensor.destroy()
                 self.surface = None
+            # Standard view
             self.sensor = self._parent.get_world().spawn_actor(
                 self.sensors[index][-1],
                 self._camera_transforms[self.transform_index],
@@ -718,10 +927,24 @@ class CameraManager(object):
             # circular reference.
             weak_self = weakref.ref(self)
             self.sensor.listen(lambda image: CameraManager._parse_image(weak_self, image))
+            
+
+        if self.sensor2 is not None:
+            self.sensor2.destroy()
+            self.surface = None
+        # Small view
+        self.sensor2 = self._parent.get_world().spawn_actor(
+            self.sensors2[self.index2][-1],
+            self._camera_transforms2,
+            attach_to=self._parent)
+        weak_self = weakref.ref(self)
+        self.sensor2.listen(lambda image: CameraManager._parse_image2(weak_self, image))
         if notify:
             self.hud.notification(self.sensors[index][2])
         self.index = index
 
+    def print_sensor2(self):
+        print([self.sx/1920,self.sy/1080,self.w/1920,self.h/1080])
     def next_sensor(self):
         self.set_sensor(self.index + 1)
 
@@ -732,7 +955,28 @@ class CameraManager(object):
     def render(self, display):
         if self.surface is not None:
             display.blit(self.surface, (0, 0))
-
+            
+            if self.surface2 is not None:
+                display.blit(self.surface2,(self.sx,self.sy))
+            else:
+                print('Surface none')
+            font = pygame.font.Font('freesansbold.ttf',60)
+            v=self._parent.get_velocity()
+            c=self._parent.get_control()
+            if c.gear>=0 and not c.manual_gear_shift:
+                tmp = 'D'
+            elif c.manual_gear_shift or c.gear == 0:
+                tmp = 'N'
+            elif c.gear < 0 and not c.manual_gear_shift:
+                tmp = 'R'
+            #tmp = 'R' if c.gear==-1 else 'D' if c.gear==1 else 'N' if c.manual_gear_shift else 'D'
+            vel=(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
+            toShow = "{} - {:.0f}".format(tmp, vel)
+            textSurface = font.render(toShow, True, (255,255,255))
+            px = 0.465 * self.hud.dim[0]
+            py = 0.65 * self.hud.dim[1]
+            display.blit(textSurface,(px,py))
+            # Location(x=0.100000, y=-0.300000, z=1.350000)
     @staticmethod
     def _parse_image(weak_self, image):
         self = weak_self()
@@ -761,6 +1005,18 @@ class CameraManager(object):
         if self.recording:
             image.save_to_disk('_out/%08d' % image.frame)
 
+    def _parse_image2(weak_self, image):
+        self = weak_self()
+        if not self:
+            return
+        image.convert(self.sensors[self.index][1])
+        array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+        array = np.reshape(array, (image.height, image.width, 4))
+        # print(image.height,image.width)
+        array = array[:, :, :3]
+        array = array[:, :, ::-1]
+        self.surface2 = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+    
 
 # ==============================================================================
 # -- game_loop() ---------------------------------------------------------------
@@ -783,8 +1039,8 @@ def game_loop(args):
         hud = HUD(args.width, args.height)
         world = World(client.get_world(), hud, args.filter)
         controller = DualControl(world, args.autopilot)
-
         clock = pygame.time.Clock()
+
         while True:
             clock.tick_busy_loop(60)
             if controller.parse_events(world, clock):
@@ -792,6 +1048,7 @@ def game_loop(args):
             world.tick(clock)
             world.render(display)
             pygame.display.flip()
+
 
     finally:
 
@@ -837,7 +1094,7 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.*',
+        default='vehicle.lincoln.*',
         help='actor filter (default: "vehicle.*")')
     args = argparser.parse_args()
 
