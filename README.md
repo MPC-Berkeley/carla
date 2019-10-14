@@ -1,5 +1,7 @@
 CARLA Simulator
 ===============
+## Notes
+This is a modification of Carla release 0.9.6 for parking lot simulation, detection, and predictions.
 
 [![Build Status](https://travis-ci.org/carla-simulator/carla.svg?branch=master)](https://travis-ci.org/carla-simulator/carla)
 [![Documentation](https://readthedocs.org/projects/carla/badge/?version=latest)](http://carla.readthedocs.io)
