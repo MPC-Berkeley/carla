@@ -27,6 +27,7 @@ from collections import deque # thread-safe queue/stack used as a ring buffer
 # import json 
 # import pickle
 import csv 
+import copy
 
 class VehicleEntry(object):
     """ A simple struct of vehicle actor properties."""
@@ -62,7 +63,7 @@ class Measurement(object):
         for name, img in zip(self._image_name_list, self._image_list):
             savename = '%s/%s_%08d.png' % (rootdir, name, self._frame_no)
             if isinstance(img, carla.Image):
-                im.save_to_disk(savename)
+                img.save_to_disk(savename)
             elif isinstance(img, np.ndarray):
                 im_pil = Image.fromarray(img)
                 im_pil.save(savename)
@@ -149,6 +150,20 @@ class DataLogger(object):
 
             prev_thread_time = current_time
 
+# Temporary global variables.
+current_image = None
+image_lock = threading.Lock()
+def image_callback(image):
+    global current_image
+    with image_lock:
+        current_image = image
+
+def extract_xyz(xyz_type):
+    return xyz_type.x, xyz_type.y, xyz_type.z
+
+def extract_rpy(rpy_type):
+    return rpy_type.roll, rpy_type.pitch, rpy_type.yaw
+
 def test_data_logger():
     """ Test functionality of main DataLogger class.  Also serves as an example of usage. """
     im_rgb = np.asarray(Image.open('_out/00011156.png')) # change to whatever dummy images you have
@@ -178,5 +193,93 @@ def test_data_logger():
 
     dl.stop()
 
+def test_carla_logging():
+    # Assumes that you have already
+    # (1) Started the Carla server (bash ...CarlaUE4.sh)
+    # (2) spawned the relevant vehicle actors.
+    #     e.g. python spawn_npc.py -n 10 -w 0; python manual_control_steeringwheel.py
+    try:
+        vehicle_actor_ids = []
+        vehicle_actor_names = []
+
+        client = carla.Client('localhost', 2000)
+        client.set_timeout(2.0)
+        world = client.get_world()
+
+        vehicle_actor_list = world.get_actors().filter('vehicle.*')
+        for actor in vehicle_actor_list:
+            vehicle_actor_ids.append(actor.id)
+            vehicle_actor_names.append('%s_%s' % (actor.type_id, actor.attributes['role_name']))
+
+        # Let's add now a "depth" camera attached to the vehicle. Note that the
+        # transform we give here is now relative to the vehicle.
+        blueprint_library = world.get_blueprint_library()
+        camera_bp = blueprint_library.find('sensor.camera.rgb')
+        camera_bp.set_attribute('image_size_x', '1920')
+        camera_bp.set_attribute('image_size_x', '1080')
+        camera_bp.set_attribute('fov', '110')
+        camera_bp.set_attribute('sensor_tick', '0.05')
+        camera_transform = carla.Transform(carla.Location(x=0.0, y=0.0, z=10.0))
+        camera = world.spawn_actor(camera_bp, camera_transform)
+        
+        cc = carla.ColorConverter.Raw
+        #camera.listen(lambda image: image.save_to_disk('_out/%06d.png' % image.frame, cc))
+        camera.listen(image_callback)
+
+        dl = DataLogger('test_carla_log', max_save_fps=10)
+        dl.start()
+
+        episode_id = 0
+        for frame_no in range(100):
+            snapshot = world.get_snapshot()
+            vehicle_entries = []
+            for veh_id, veh_name in zip(vehicle_actor_ids, vehicle_actor_names):
+                try:
+                    vehicle = snapshot.find(veh_id)
+                    transform = vehicle.get_transform()
+                    x, y, z = extract_xyz(transform.location)
+                    roll, pitch, yaw = extract_rpy(transform.rotation)
+                    vx, vy, vz = extract_xyz(vehicle.get_velocity())
+                    wx, wy, wz = extract_xyz(vehicle.get_angular_velocity())
+                    ax, ay, az = extract_xyz(vehicle.get_acceleration())
+                    vehicle_entries.append(
+                        VehicleEntry(veh_id, veh_name, \
+                                    [x,y,z], \
+                                    [roll, pitch, yaw], \
+                                    [vx, vy, vz], \
+                                    [wx, wy, wz], \
+                                    [ax, ay, az])
+                    )
+                except Exception as e:
+                    print(e)
+                    
+
+            global current_image
+            latest_image = None
+            with image_lock:
+                # TODO: Worried if the image will go out of scope.
+                # copy.deepcopy does not work on this.
+                # I think current_image's address may change but latest_image
+                # will be fixed to the value at this point in time.
+                latest_image = current_image
+
+            if latest_image is None:
+                print('No image yet!')
+                time.sleep(0.1)
+                continue
+
+            measurement = Measurement(episode_id, frame_no, snapshot.timestamp.platform_timestamp, [latest_image], ['spectator'], \
+                vehicle_entries)
+            dl.update(measurement)
+
+            time.sleep(0.1)
+
+        dl.stop()
+        camera.destroy()
+    except:
+        if 'camera' in vars():
+            camera.destroy()
+
 if __name__ == '__main__':
-    test_data_logger()
+    #test_data_logger()
+    test_carla_logging()
