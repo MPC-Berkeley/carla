@@ -126,7 +126,7 @@ class DataLogger(object):
             raise RuntimeError("The saving thread should be started first.")
 
         self._fifo_queue.append(entry)
-
+        
     def stop(self, finish_writing=True):
         """ Stop the saver thread.
 
@@ -199,9 +199,11 @@ def test_carla_logging():
     #     e.g. python spawn_npc.py -n 10 -w 0; python manual_control_steeringwheel.py
     
     # Callback used for Carla logging example only.
+    global current_image 
     current_image = None
     image_lock = threading.Lock()
     def image_callback(image):
+        global current_image
         with image_lock:
             current_image = image
 
@@ -237,6 +239,7 @@ def test_carla_logging():
         dl.start()
 
         episode_id = 0
+        global current_image
         for frame_no in range(100):
             snapshot = world.get_snapshot()
             vehicle_entries = []

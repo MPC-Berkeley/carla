@@ -394,7 +394,7 @@ class HUD(object):
         self._show_info = True
         self._info_text = []
         self._server_clock = pygame.time.Clock()
-        self._data_logger = dl.DataLogger('carla_log', max_save_fps=10)
+        self._data_logger = dl.DataLogger('carla_log', max_save_fps=10, maxlen=2)
         self._data_logger.start()
 
     def on_world_tick(self, timestamp):
@@ -899,7 +899,7 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1280x720',
+        default='800x600',
         help='window resolution (default: 1280x720)')
     argparser.add_argument(
         '--filter',
