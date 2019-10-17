@@ -119,6 +119,8 @@ try:
 except ImportError:
     raise RuntimeError('cannot import numpy, make sure numpy package is installed')
 
+import data_logger as dl
+import threading
 
 # ==============================================================================
 # -- Global functions ----------------------------------------------------------
@@ -219,6 +221,8 @@ class World(object):
         self.camera_manager.index = None
 
     def destroy(self):
+        self.hud._data_logger.stop(finish_writing=False)
+        print('destroy')
         actors = [
             self.camera_manager.sensor,
             self.collision_sensor.sensor,
@@ -390,6 +394,8 @@ class HUD(object):
         self._show_info = True
         self._info_text = []
         self._server_clock = pygame.time.Clock()
+        self._data_logger = dl.DataLogger('carla_log', max_save_fps=10)
+        self._data_logger.start()
 
     def on_world_tick(self, timestamp):
         self._server_clock.tick()
@@ -401,13 +407,32 @@ class HUD(object):
         self._notifications.tick(world, clock)
         if not self._show_info:
             return
-        t = world.player.get_transform()
-        v = world.player.get_velocity()
-        c = world.player.get_control()
-        heading = 'N' if abs(t.rotation.yaw) < 89.5 else ''
-        heading += 'S' if abs(t.rotation.yaw) > 90.5 else ''
-        heading += 'E' if 179.5 > t.rotation.yaw > 0.5 else ''
-        heading += 'W' if -0.5 > t.rotation.yaw > -179.5 else ''
+        
+        ego_t = world.player.get_transform()
+        ego_v = world.player.get_velocity()
+        ego_av = world.player.get_angular_velocity()
+        ego_c = world.player.get_control()
+        ego_img = world.camera_manager.get_last_image()
+        ego_acc = world.player.get_acceleration()
+        max_steer_angle = max([wheel.max_steer_angle for wheel in world.player.get_physics_control().wheels])
+
+        # Add ego to vehicle list
+        vehicle_logging_entries = []
+        vehicle_logging_entries.append(
+            dl.VehicleEntry(world.player.id, '%s_ego' % world.player.type_id, \
+                        dl.extract_xyz(ego_t.location), \
+                        dl.extract_rpy(ego_t.rotation), \
+                        dl.extract_xyz(ego_v), \
+                        dl.extract_xyz(ego_av), \
+                        dl.extract_xyz(ego_acc), 
+                        ego_c.throttle, \
+                        ego_c.brake, \
+                        ego_c.steer * max_steer_angle))
+
+        heading = 'N' if abs(ego_t.rotation.yaw) < 89.5 else ''
+        heading += 'S' if abs(ego_t.rotation.yaw) > 90.5 else ''
+        heading += 'E' if 179.5 > ego_t.rotation.yaw > 0.5 else ''
+        heading += 'W' if -0.5 > ego_t.rotation.yaw > -179.5 else ''
         colhist = world.collision_sensor.get_collision_history()
         collision = [colhist[x + self.frame - 200] for x in range(0, 200)]
         max_col = max(1.0, max(collision))
@@ -421,40 +446,63 @@ class HUD(object):
             'Map:     % 20s' % world.map.name,
             'Simulation time: % 12s' % datetime.timedelta(seconds=int(self.simulation_time)),
             '',
-            'Speed:   % 15.0f km/h' % (3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)),
-            u'Heading:% 16.0f\N{DEGREE SIGN} % 2s' % (t.rotation.yaw, heading),
-            'Location:% 20s' % ('(% 5.1f, % 5.1f)' % (t.location.x, t.location.y)),
+            'Speed:   % 15.0f km/h' % (3.6 * math.sqrt(ego_v.x**2 + ego_v.y**2 + ego_v.z**2)),
+            u'Heading:% 16.0f\N{DEGREE SIGN} % 2s' % (ego_t.rotation.yaw, heading),
+            'Location:% 20s' % ('(% 5.1f, % 5.1f)' % (ego_t.location.x, ego_t.location.y)),
             'GNSS:% 24s' % ('(% 2.6f, % 3.6f)' % (world.gnss_sensor.lat, world.gnss_sensor.lon)),
-            'Height:  % 18.0f m' % t.location.z,
+            'Height:  % 18.0f m' % ego_t.location.z,
             '']
-        if isinstance(c, carla.VehicleControl):
+        if isinstance(ego_c, carla.VehicleControl):
             self._info_text += [
-                ('Throttle:', c.throttle, 0.0, 1.0),
-                ('Steer:', c.steer, -1.0, 1.0),
-                ('Brake:', c.brake, 0.0, 1.0),
-                ('Reverse:', c.reverse),
-                ('Hand brake:', c.hand_brake),
-                ('Manual:', c.manual_gear_shift),
-                'Gear:        %s' % {-1: 'R', 0: 'N'}.get(c.gear, c.gear)]
-        elif isinstance(c, carla.WalkerControl):
+                ('Throttle:', ego_c.throttle, 0.0, 1.0),
+                ('Steer:', ego_c.steer, -1.0, 1.0),
+                ('Brake:', ego_c.brake, 0.0, 1.0),
+                ('Reverse:', ego_c.reverse),
+                ('Hand brake:', ego_c.hand_brake),
+                ('Manual:', ego_c.manual_gear_shift),
+                'Gear:        %s' % {-1: 'R', 0: 'N'}.get(ego_c.gear, ego_c.gear)]
+        elif isinstance(ego_c, carla.WalkerControl):
             self._info_text += [
-                ('Speed:', c.speed, 0.0, 5.556),
-                ('Jump:', c.jump)]
+                ('Speed:', ego_c.speed, 0.0, 5.556),
+                ('Jump:', ego_c.jump)]
         self._info_text += [
             '',
             'Collision:',
             collision,
             '',
             'Number of vehicles: % 8d' % len(vehicles)]
+        
         if len(vehicles) > 1:
             self._info_text += ['Nearby vehicles:']
-            distance = lambda l: math.sqrt((l.x - t.location.x)**2 + (l.y - t.location.y)**2 + (l.z - t.location.z)**2)
+            distance = lambda l: math.sqrt((l.x - ego_t.location.x)**2 + (l.y - ego_t.location.y)**2 + (l.z - ego_t.location.z)**2)
             vehicles = [(distance(x.get_location()), x) for x in vehicles if x.id != world.player.id]
             for d, vehicle in sorted(vehicles):
                 if d > 200.0:
                     break
                 vehicle_type = get_actor_display_name(vehicle, truncate=22)
                 self._info_text.append('% 4dm %s' % (d, vehicle_type))
+        
+                transform = vehicle.get_transform()
+                x, y, z = dl.extract_xyz(transform.location)
+                roll, pitch, yaw = dl.extract_rpy(transform.rotation)
+                vx, vy, vz = dl.extract_xyz(vehicle.get_velocity())
+                wx, wy, wz = dl.extract_xyz(vehicle.get_angular_velocity())
+                ax, ay, az = dl.extract_xyz(vehicle.get_acceleration())
+
+                vehicle_logging_entries.append(
+                    dl.VehicleEntry(vehicle.id, '%s_npc' % vehicle.type_id, \
+                                [x,y,z], \
+                                [roll, pitch, yaw], \
+                                [vx, vy, vz], \
+                                [wx, wy, wz], \
+                                [ax, ay, az]))
+        
+        #TODO: fix the episode id, not hard code to 0
+        img_list = [ego_img] if ego_img is not None else []
+        img_name_list = ['ego'] if ego_img is not None else []
+        measurement = dl.Measurement(0, self.frame, self.simulation_time, img_list, img_name_list, \
+                vehicle_logging_entries)
+        self._data_logger.update(measurement)
 
     def toggle_info(self):
         self._show_info = not self._show_info
@@ -698,6 +746,8 @@ class CameraManager(object):
                 bp.set_attribute('range', '5000')
             item.append(bp)
         self.index = None
+        self._last_image = None
+        self._image_lock = threading.Lock()
 
     def toggle_camera(self):
         self.transform_index = (self.transform_index + 1) % len(self._camera_transforms)
@@ -735,6 +785,13 @@ class CameraManager(object):
         if self.surface is not None:
             display.blit(self.surface, (0, 0))
 
+    def get_last_image(self):
+        with self._image_lock:
+            if self._last_image is not None:
+                return np.copy(self._last_image)
+            else:
+                return np.array([])
+
     @staticmethod
     def _parse_image(weak_self, image):
         self = weak_self()
@@ -753,6 +810,8 @@ class CameraManager(object):
             lidar_img = np.zeros((lidar_img_size), dtype = int)
             lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
             self.surface = pygame.surfarray.make_surface(lidar_img)
+            with self._image_lock:
+                self._last_image = lidar_img
         else:
             image.convert(self.sensors[self.index][1])
             array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
@@ -760,6 +819,8 @@ class CameraManager(object):
             array = array[:, :, :3]
             array = array[:, :, ::-1]
             self.surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+            with self._image_lock:
+                self._last_image = array
         if self.recording:
             image.save_to_disk('_out/%08d' % image.frame)
 
@@ -790,13 +851,14 @@ def game_loop(args):
         while True:
             clock.tick_busy_loop(60)
             if controller.parse_events(client, world, clock):
+                print('should quit')
                 return
             world.tick(clock)
             world.render(display)
             pygame.display.flip()
 
     finally:
-
+        print('here')
         if (world and world.recording_enabled):
             client.stop_recorder()
 
@@ -842,8 +904,8 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.*',
-        help='actor filter (default: "vehicle.*")')
+        default='vehicle.lincoln.*',
+        help='actor filter (default: "vehicle.lincoln.*")')
     argparser.add_argument(
         '--rolename',
         metavar='NAME',

@@ -29,10 +29,19 @@ from collections import deque # thread-safe queue/stack used as a ring buffer
 import csv 
 import copy
 
+# Helper utility functions for data extraction.
+def extract_xyz(xyz_type):
+    return xyz_type.x, xyz_type.y, xyz_type.z
+
+def extract_rpy(rpy_type):
+    return rpy_type.roll, rpy_type.pitch, rpy_type.yaw
+
+# Class implementation: VehicleEntry, Measurement, and DataLogger.
 class VehicleEntry(object):
     """ A simple struct of vehicle actor properties."""
 
-    def __init__(self, actor_id, actor_name, position, orientation, velocity, angular_velocity, acceleration):
+    def __init__(self, actor_id, actor_name, position, orientation, velocity, angular_velocity, acceleration, \
+                 throttle=np.nan, brake=np.nan, steer_angle=np.nan):
         # TODO: finalize the entries needed (e.g. maybe bounding box).
         self.id = actor_id
         self.name = actor_name
@@ -42,6 +51,9 @@ class VehicleEntry(object):
         self.velocity = velocity
         self.angular_velocity = angular_velocity
         self.acceleration = acceleration
+        self.throttle = throttle
+        self.brake = brake   
+        self.steer_angle = steer_angle
 
 class Measurement(object):
     """ A single timestamped measurement containing images and a list of VehicleEntry objects."""
@@ -150,20 +162,7 @@ class DataLogger(object):
 
             prev_thread_time = current_time
 
-# Temporary global variables.
-current_image = None
-image_lock = threading.Lock()
-def image_callback(image):
-    global current_image
-    with image_lock:
-        current_image = image
-
-def extract_xyz(xyz_type):
-    return xyz_type.x, xyz_type.y, xyz_type.z
-
-def extract_rpy(rpy_type):
-    return rpy_type.roll, rpy_type.pitch, rpy_type.yaw
-
+# Test main functions: one with fake data and one with a Carla client.
 def test_data_logger():
     """ Test functionality of main DataLogger class.  Also serves as an example of usage. """
     im_rgb = np.asarray(Image.open('_out/00011156.png')) # change to whatever dummy images you have
@@ -198,6 +197,14 @@ def test_carla_logging():
     # (1) Started the Carla server (bash ...CarlaUE4.sh)
     # (2) spawned the relevant vehicle actors.
     #     e.g. python spawn_npc.py -n 10 -w 0; python manual_control_steeringwheel.py
+    
+    # Callback used for Carla logging example only.
+    current_image = None
+    image_lock = threading.Lock()
+    def image_callback(image):
+        with image_lock:
+            current_image = image
+
     try:
         vehicle_actor_ids = []
         vehicle_actor_names = []
@@ -253,14 +260,10 @@ def test_carla_logging():
                 except Exception as e:
                     print(e)
                     
-
-            global current_image
             latest_image = None
             with image_lock:
-                # TODO: Worried if the image will go out of scope.
-                # copy.deepcopy does not work on this.
-                # I think current_image's address may change but latest_image
-                # will be fixed to the value at this point in time.
+                # TODO: May be a better way to handle this extracting of the global image variable.
+                # If we ensure current_image is a numpy array, can use np.copy instead.
                 latest_image = current_image
 
             if latest_image is None:
@@ -281,5 +284,6 @@ def test_carla_logging():
             camera.destroy()
 
 if __name__ == '__main__':
+    # Can choose which test to run here, or add argparse later.
     #test_data_logger()
     test_carla_logging()
