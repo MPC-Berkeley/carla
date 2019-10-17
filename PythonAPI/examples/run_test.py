@@ -29,7 +29,7 @@ from __future__ import print_function
 import glob
 import os
 import sys
-
+from utils.VehicleSpawner import VehicleSpawner
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -84,7 +84,7 @@ def game_loop(args):
     try:
         client = carla.Client(args.host, args.port)
         client.set_timeout(2.0)
-
+        spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
         display = pygame.display.set_mode(
             (args.width, args.height),
             pygame.HWSURFACE | pygame.DOUBLEBUF)
@@ -106,6 +106,7 @@ def game_loop(args):
     finally:
 
         if world is not None:
+            spwnr.remove()
             world.destroy()
 
         pygame.quit()
