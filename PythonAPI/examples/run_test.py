@@ -56,6 +56,13 @@ import math
 import random
 import re
 import weakref
+import numpy as np
+import random
+
+# Calibrate the resistence of wheeel
+import evdev
+from evdev import ecodes, InputDevice
+
 from utils.carla_utils import *
 if sys.version_info >= (3, 0):
     from configparser import ConfigParser
@@ -81,30 +88,57 @@ def game_loop(args):
     pygame.font.init()
     world = None
 
+    drone_camera = None
+
     try:
-        client = carla.Client(args.host, args.port)
-        client.set_timeout(2.0)
-        spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
-        display = pygame.display.set_mode(
-            (args.width, args.height),
-            pygame.HWSURFACE | pygame.DOUBLEBUF)
+        for scen in range(2):
+            np.random.seed(1)
+            random.seed(1)
+            
+            client = carla.Client(args.host, args.port)
+            client.set_timeout(2.0)
+            display = pygame.display.set_mode(
+                (args.width, args.height),
+                pygame.HWSURFACE | pygame.DOUBLEBUF)
 
-        hud = HUD(args.width, args.height)
-        world = World(client.get_world(), hud, args.filter)
-        controller = DualControl(world, args.autopilot)
-        clock = pygame.time.Clock()
+            hud = HUD(args.width, args.height)
+            world = World(client.get_world(), hud, args.filter)
+            controller = DualControl(world, args.autopilot)
 
-        while True:
-            clock.tick_busy_loop(60)
-            if controller.parse_events(world, clock):
-                return
-            world.tick(clock)
-            world.render(display)
-            pygame.display.flip()
+            # # "Drone" camera view
+            blueprint_library = world.world.get_blueprint_library()
+            drone_camera_bp = blueprint_library.find('sensor.camera.rgb')
+            drone_camera_bp.set_attribute('image_size_x', str(args.width))
+            drone_camera_bp.set_attribute('image_size_x', str(args.height))
+            drone_camera_bp.set_attribute('fov', '120')
+            drone_camera_bp.set_attribute('sensor_tick', '0.05')
+            drone_camera_transform = carla.Transform(carla.Location(x=285.0, y=-210.0, z=20.0), carla.Rotation(yaw=90.0, pitch=-90))
+            drone_camera = world.world.spawn_actor(drone_camera_bp, drone_camera_transform)
 
+            for ep in range(3):
+                print('Episode: ', ep)
+                
+
+                spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
+                clock = pygame.time.Clock()
+
+                while True:
+                    clock.tick_busy_loop(60)
+                    if controller.parse_events(world, clock):
+                        break
+                    world.tick(clock)
+                    world.render(display)
+                    pygame.display.flip()
+
+                spwnr.remove()
+                world.restart()
+                # world.destroy()
+    except Exception as e:
+        print(e)
 
     finally:
-
+        if drone_camera:
+            drone_camera.destroy()
         if world is not None:
             spwnr.remove()
             world.destroy()
@@ -148,8 +182,14 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.lincoln.*',
+        default='vehicle.tesla.*',
         help='actor filter (default: "vehicle.*")')
+
+    argparser.add_argument(
+        '-t', '--test', 
+        help="test drive mode",
+        action="store_true")
+
     args = argparser.parse_args()
 
     args.width, args.height = [int(x) for x in args.res.split('x')]
@@ -159,11 +199,17 @@ def main():
 
     logging.info('listening to server %s:%s', args.host, args.port)
 
+    # Calibrate the steer wheel
+    device = evdev.list_devices()[0]
+    evtdev = InputDevice(device)
+    val = 15000
+    evtdev.write(ecodes.EV_FF, ecodes.FF_AUTOCENTER, val)
+
     print(__doc__)
 
     try:
-
         game_loop(args)
+        
 
     except KeyboardInterrupt:
         print('\nCancelled by user. Bye!')

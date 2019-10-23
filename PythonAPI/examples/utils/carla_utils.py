@@ -130,7 +130,13 @@ def get_actor_display_name(actor, truncate=250):
 
 
 class World(object):
-    def __init__(self, carla_world, hud, actor_filter):
+    def __init__(self, carla_world, hud, actor_filter, fps=60, prefered_spawn_point=None):
+
+        settings = carla_world.get_settings()
+        settings.fixed_delta_seconds = (1.0 / fps) if fps > 0.0 else 0.0
+
+        carla_world.apply_settings(settings)
+
         self.world = carla_world
         self.hud = hud
         self.player = None
@@ -141,10 +147,10 @@ class World(object):
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
         self._actor_filter = actor_filter
-        self.restart()
+        self.restart(prefered_spawn_point)
         self.world.on_tick(hud.on_world_tick)
 
-    def restart(self):
+    def restart(self, prefered_spawn_point=None):
         # Keep same camera config if the camera manager exists.
         cam_index = self.camera_manager.index if self.camera_manager is not None else 0
         cam_pos_index = self.camera_manager.transform_index if self.camera_manager is not None else 0
@@ -154,10 +160,17 @@ class World(object):
         if blueprint.has_attribute('color'):
             color = random.choice(blueprint.get_attribute('color').recommended_values)
             blueprint.set_attribute('color', color)
+        print(self.player)
         # Spawn the player.
         if self.player is not None:
+            # TODO: use prefered_spawn_point if not None
             spawn_point = self.player.get_transform()
+            # Set the 
+            spawn_point.location.x = 285.0
+            spawn_point.location.y = -240.0
+            spawn_point.rotation.yaw = 90.0
             spawn_point.location.z += 2.0
+            # self.player.set_location(spawn_point.location)
             spawn_point.rotation.roll = 0.0
             spawn_point.rotation.pitch = 0.0
             self.destroy()
@@ -165,6 +178,9 @@ class World(object):
         while self.player is None:
             spawn_points = self.world.get_map().get_spawn_points()
             spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
+            spawn_point.location.x = 285.0
+            spawn_point.location.y = -240.0
+            spawn_point.rotation.yaw = 90.0
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
         # Set up the sensors.
         self.collision_sensor = CollisionSensor(self.player, self.hud)
@@ -213,6 +229,8 @@ class DualControl(object):
         self._autopilot_enabled = start_in_autopilot
         if isinstance(world.player, carla.Vehicle):
             self._control = carla.VehicleControl()
+            self._control.throttle = 0.
+            self._control.gear = 0
      
             world.player.set_autopilot(self._autopilot_enabled)
         elif isinstance(world.player, carla.Walker):
@@ -408,6 +426,7 @@ class DualControl(object):
                     print('Fov uppercamera',cm.w)
 
             elif event.type == pygame.JOYBUTTONDOWN:
+                # print(event.button)
                 if event.button == 0:
                     world.restart()
                 elif event.button == 1:
@@ -418,6 +437,11 @@ class DualControl(object):
                     world.next_weather()
                 elif event.button == self._reverse_idx:
                     self._control.gear = 1 if self._control.reverse else -1
+
+                # Exit the current episode
+                elif event.button == 11:
+                    return True
+
                 elif event.button == 14:
                     self._control.reverse = False
                     self._control.gear = 1
@@ -527,7 +551,6 @@ class DualControl(object):
             brakeCmd = 0
         elif brakeCmd > 1:
             brakeCmd = 1
-
 
 
         self._control.steer = steerCmd
@@ -860,8 +883,13 @@ class CameraManager(object):
         self.hud = hud
         self.recording = False
         self._camera_transforms = [
-            carla.Transform(carla.Location(x=-2.5, z=2.0), carla.Rotation(pitch=-15)),
-            carla.Transform(carla.Location(x=0.10, y=-0.32125, z=1.35),carla.Rotation(pitch=-10)),
+            # 3rd person view
+            carla.Transform(carla.Location(x=-3.349999, y=-0.10, z=2.10), carla.Rotation(pitch=-23)),
+            # For MKZ
+            # carla.Transform(carla.Location(x=0.10, y=-0.32125, z=1.35),carla.Rotation(pitch=-10)),
+            # For Tesla
+            carla.Transform(carla.Location(x=-0.05, y=-0.37125, z=1.25),carla.Rotation(pitch=-10)),
+
             ]
         self.transform_index = 1
         self.sensors = [
@@ -877,6 +905,7 @@ class CameraManager(object):
         bp_library = world.get_blueprint_library()
         for item in self.sensors:
             bp = bp_library.find(item[0])
+            bp.set_attribute('role_name', str('front'))
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(hud.dim[0]))
                 bp.set_attribute('image_size_y', str(hud.dim[1]))
@@ -887,11 +916,12 @@ class CameraManager(object):
         self.index = None
 
         self._camera_transforms2 = carla.Transform(carla.Location(x=0.0, y=0, z=3.5),carla.Rotation(pitch=-90))
+       
         self.sensor2 = None
         self.surface2 = None
 
         self.sx = 0.7760417 * hud.dim[0]; self.sy = 0.6564855 * hud.dim[1]
-        self.w = 0.11198 * hud.dim[0]; self.h = 0.281481 * hud.dim[1]
+        self.w = int(0.11198 * hud.dim[0]); self.h = int(0.281481 * hud.dim[1])
         self.index2 = 0
         self.sensors2 = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
@@ -900,6 +930,7 @@ class CameraManager(object):
             ]
         for item in self.sensors2:
             bp = bp_library.find(item[0])
+            bp.set_attribute('role_name', str('overhead'))
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(self.w))
                 bp.set_attribute('image_size_y', str(self.h))
