@@ -884,7 +884,7 @@ class CameraManager(object):
         self.recording = False
         self._camera_transforms = [
             # 3rd person view
-            carla.Transform(carla.Location(x=-3.349999, y=-0.10, z=2.10), carla.Rotation(pitch=-23)),
+            carla.Transform(carla.Location(x=-4.550000, y=-0.000000, z=2.450000), carla.Rotation(pitch=-23)),
             # For MKZ
             # carla.Transform(carla.Location(x=0.10, y=-0.32125, z=1.35),carla.Rotation(pitch=-10)),
             # For Tesla
@@ -920,8 +920,9 @@ class CameraManager(object):
         self.sensor2 = None
         self.surface2 = None
 
-        self.sx = 0.7760417 * hud.dim[0]; self.sy = 0.6564855 * hud.dim[1]
-        self.w = int(0.11198 * hud.dim[0]); self.h = int(0.281481 * hud.dim[1])
+
+        self.sx = 0.825520 * hud.dim[0]; self.sy = 0.500235 * hud.dim[1]
+        self.w = int(0.1119791666 * hud.dim[0]); self.h = int(0.28125 * hud.dim[1])
         self.index2 = 0
         self.sensors2 = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
@@ -975,7 +976,7 @@ class CameraManager(object):
         self.index = index
 
     def print_sensor2(self):
-        print([self.sx/1920,self.sy/1080,self.w/1920,self.h/1080])
+        print([self.sx/self.hud.dim[0],self.sy/self.hud.dim[1],self.w/self.hud.dim[0],self.h/self.hud.dim[1]])
     def next_sensor(self):
         self.set_sensor(self.index + 1)
 

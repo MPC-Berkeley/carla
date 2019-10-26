@@ -63,6 +63,10 @@ import random
 import evdev
 from evdev import ecodes, InputDevice
 
+# Rosbag record
+import subprocess, shlex
+import time
+
 from utils.carla_utils import *
 if sys.version_info >= (3, 0):
     from configparser import ConfigParser
@@ -91,32 +95,47 @@ def game_loop(args):
     drone_camera = None
 
     try:
-        for scen in range(2):
-            np.random.seed(1)
-            random.seed(1)
+        client = carla.Client(args.host, args.port)
+        client.set_timeout(2.0)
+        display = pygame.display.set_mode(
+            (args.width, args.height),
+            pygame.HWSURFACE | pygame.DOUBLEBUF)
+
+        hud = HUD(args.width, args.height)
+        world = World(client.get_world(), hud, args.filter)
+        controller = DualControl(world, args.autopilot)
+
+        # # "Drone" camera view
+        blueprint_library = world.world.get_blueprint_library()
+        drone_camera_bp = blueprint_library.find('sensor.camera.rgb')
+        # drone_camera_bp.set_attribute('image_size_x', str(args.width))
+        # drone_camera_bp.set_attribute('image_size_y', str(args.height))
+        drone_camera_bp.set_attribute('image_size_x', str(600))
+        drone_camera_bp.set_attribute('image_size_y', str(800))
+        drone_camera_bp.set_attribute('fov', '100')
+        drone_camera_bp.set_attribute('sensor_tick', '0.05')
+        drone_camera_transform = carla.Transform(carla.Location(x=285.0, y=-210.0, z=20.0), carla.Rotation(yaw=90.0, pitch=-90))
+        drone_camera = world.world.spawn_actor(drone_camera_bp, drone_camera_transform)
+
+        for scene in [1,2]*3:
+            np.random.seed(scene)
+            random.seed(scene)
             
-            client = carla.Client(args.host, args.port)
-            client.set_timeout(2.0)
-            display = pygame.display.set_mode(
-                (args.width, args.height),
-                pygame.HWSURFACE | pygame.DOUBLEBUF)
-
-            hud = HUD(args.width, args.height)
-            world = World(client.get_world(), hud, args.filter)
-            controller = DualControl(world, args.autopilot)
-
-            # # "Drone" camera view
-            blueprint_library = world.world.get_blueprint_library()
-            drone_camera_bp = blueprint_library.find('sensor.camera.rgb')
-            drone_camera_bp.set_attribute('image_size_x', str(args.width))
-            drone_camera_bp.set_attribute('image_size_x', str(args.height))
-            drone_camera_bp.set_attribute('fov', '120')
-            drone_camera_bp.set_attribute('sensor_tick', '0.05')
-            drone_camera_transform = carla.Transform(carla.Location(x=285.0, y=-210.0, z=20.0), carla.Rotation(yaw=90.0, pitch=-90))
-            drone_camera = world.world.spawn_actor(drone_camera_bp, drone_camera_transform)
-
             for ep in range(3):
-                print('Episode: ', ep)
+                print('scene: %d , Episode: %d' % (scene, ep))
+
+                # ROSBAG RECORD
+                command = "roslaunch carla_ros_bridge carla_ros_bridge.launch"
+                command = shlex.split(command)              
+                # roslaunch_proc = subprocess.Popen(command)
+                time.sleep(0.1)
+
+                # ROSBAG RECORD
+                command = "rosbag record -a -o bags/parking_p%s_s%d_e%d.bag" % (args.s_id, scene, ep)
+                command = shlex.split(command)
+                rosbag_proc = None
+                if args.record:
+                    rosbag_proc = subprocess.Popen(command)
                 
 
                 spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
@@ -131,10 +150,17 @@ def game_loop(args):
                     pygame.display.flip()
 
                 spwnr.remove()
+                # Stop the rosbag recording
+                if rosbag_proc:
+                    rosbag_proc.send_signal(subprocess.signal.SIGINT)
+                # roslaunch_proc.send_signal(subprocess.signal.SIGINT)
                 world.restart()
+            print('Done with ep loop')
+
+        print('Done with scene loop')
                 # world.destroy()
     except Exception as e:
-        print(e)
+        print('got an exception', e)
 
     finally:
         if drone_camera:
@@ -177,7 +203,7 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1280x720',
+        default='1920x1280',
         help='window resolution (default: 1280x720)')
     argparser.add_argument(
         '--filter',
@@ -186,9 +212,16 @@ def main():
         help='actor filter (default: "vehicle.*")')
 
     argparser.add_argument(
-        '-t', '--test', 
-        help="test drive mode",
-        action="store_true")
+        '-i', '--s_id', 
+        help="id of the subject",
+        required=True,
+        type=int)
+
+    argparser.add_argument(
+        '-r', '--record', 
+        help="id of the subject",
+        default=0,
+        type=int)
 
     args = argparser.parse_args()
 
