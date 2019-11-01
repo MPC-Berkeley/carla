@@ -132,10 +132,10 @@ def get_actor_display_name(actor, truncate=250):
 class World(object):
     def __init__(self, carla_world, hud, actor_filter, fps=60, prefered_spawn_point=None):
 
-        settings = carla_world.get_settings()
-        settings.fixed_delta_seconds = (1.0 / fps) if fps > 0.0 else 0.0
+        # settings = carla_world.get_settings()
+        # settings.fixed_delta_seconds = (1.0 / fps) if fps > 0.0 else 0.0
 
-        carla_world.apply_settings(settings)
+        # carla_world.apply_settings(settings)
 
         self.world = carla_world
         self.hud = hud
@@ -428,7 +428,8 @@ class DualControl(object):
             elif event.type == pygame.JOYBUTTONDOWN:
                 # print(event.button)
                 if event.button == 0:
-                    world.restart()
+                    # world.restart()
+                    world.camera_manager.toggle_camera()
                 elif event.button == 1:
                     world.hud.toggle_info()
                 elif event.button == 2:
@@ -438,6 +439,8 @@ class DualControl(object):
                 elif event.button == self._reverse_idx:
                     self._control.gear = 1 if self._control.reverse else -1
 
+                elif event.button == 6:
+                    print("Intention Determined")
                 # Exit the current episode
                 elif event.button == 11:
                     return True

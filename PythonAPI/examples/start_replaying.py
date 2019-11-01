@@ -53,7 +53,7 @@ def main():
     argparser.add_argument(
         '-f', '--recorder_filename',
         metavar='F',
-        default="test1.log",
+        required=True,
         help='recorder filename (test1.log)')
     argparser.add_argument(
         '-c', '--camera',

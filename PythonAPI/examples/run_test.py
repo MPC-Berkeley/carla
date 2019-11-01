@@ -97,6 +97,7 @@ def game_loop(args):
     try:
         client = carla.Client(args.host, args.port)
         client.set_timeout(2.0)
+        # client.load_world('exp')
         display = pygame.display.set_mode(
             (args.width, args.height),
             pygame.HWSURFACE | pygame.DOUBLEBUF)
@@ -136,6 +137,8 @@ def game_loop(args):
                 rosbag_proc = None
                 if args.record:
                     rosbag_proc = subprocess.Popen(command)
+                    client.start_recorder("parking_p%s_s%d_e%d.log" % (args.s_id, scene, ep))
+
                 
 
                 spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
@@ -153,6 +156,7 @@ def game_loop(args):
                 # Stop the rosbag recording
                 if rosbag_proc:
                     rosbag_proc.send_signal(subprocess.signal.SIGINT)
+                    client.stop_recorder()
                 # roslaunch_proc.send_signal(subprocess.signal.SIGINT)
                 world.restart()
             print('Done with ep loop')
@@ -235,7 +239,7 @@ def main():
     # Calibrate the steer wheel
     device = evdev.list_devices()[0]
     evtdev = InputDevice(device)
-    val = 15000
+    val = 20000
     evtdev.write(ecodes.EV_FF, ecodes.FF_AUTOCENTER, val)
 
     print(__doc__)
