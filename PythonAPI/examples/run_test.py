@@ -67,6 +67,10 @@ from evdev import ecodes, InputDevice
 import subprocess, shlex
 import time
 
+# ROS topic intention
+import rospy
+from std_msgs.msg import String
+
 from utils.carla_utils import *
 if sys.version_info >= (3, 0):
     from configparser import ConfigParser
@@ -94,6 +98,10 @@ def game_loop(args):
 
     drone_camera = None
 
+    rosbag_proc = None
+
+    trail = args.trail
+
     try:
         client = carla.Client(args.host, args.port)
         client.set_timeout(2.0)
@@ -114,63 +122,94 @@ def game_loop(args):
         drone_camera_bp.set_attribute('image_size_x', str(600))
         drone_camera_bp.set_attribute('image_size_y', str(800))
         drone_camera_bp.set_attribute('fov', '100')
-        drone_camera_bp.set_attribute('sensor_tick', '0.05')
+        drone_camera_bp.set_attribute('sensor_tick', '0.1')
         drone_camera_transform = carla.Transform(carla.Location(x=285.0, y=-210.0, z=20.0), carla.Rotation(yaw=90.0, pitch=-90))
         drone_camera = world.world.spawn_actor(drone_camera_bp, drone_camera_transform)
 
-        for scene in [1,2]*3:
-            np.random.seed(scene)
-            random.seed(scene)
+        rospy.init_node('intention_node', anonymous=True)
+        intention_pub = rospy.Publisher('intention', String, queue_size=10)
+
+        np.random.seed(0)
+        random.seed(0)
+
+        for ep in range(2):
+            print('trail: %d , Episode: %d' % (trail, ep))
+
+            # ROSBAG RECORD
+            command = "roslaunch carla_ros_bridge carla_ros_bridge.launch"
+            command = shlex.split(command)              
+            # roslaunch_proc = subprocess.Popen(command)
+            time.sleep(0.1)
+
+            # ROSBAG RECORD
+            command = "rosbag record -a -o bags/parking_p%d_t%d_e%d.bag __name:=carla_rosbag" % (args.s_id, trail, ep)
+            command = shlex.split(command)
+            rosbag_proc = None
+            if args.record:
+                rosbag_proc = subprocess.Popen(command)
+
+                now = datetime.datetime.now()
+                now = now.strftime("%Y-%m-%d-%H-%M-%S")
+                # client.start_recorder("/home/carla/PythonAPI/examples/bags/parking_p%s_s%d_e%d_%s.log" % (args.s_id, trail, ep, now))
+                client.start_recorder("parking_p%d_t%d_e%d_%s.log" % (args.s_id, trail, ep, now))
+
             
-            for ep in range(3):
-                print('scene: %d , Episode: %d' % (scene, ep))
 
-                # ROSBAG RECORD
-                command = "roslaunch carla_ros_bridge carla_ros_bridge.launch"
-                command = shlex.split(command)              
-                # roslaunch_proc = subprocess.Popen(command)
-                time.sleep(0.1)
+            spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
+            clock = pygame.time.Clock()
 
-                # ROSBAG RECORD
-                command = "rosbag record -a -o bags/parking_p%s_s%d_e%d.bag" % (args.s_id, scene, ep)
+            while True:
+                clock.tick_busy_loop(60)
+
+                controller_return = controller.parse_events(world, clock)
+
+                if controller_return == 10:
+                    print("Terminated by user")
+                    raise KeyboardInterrupt
+
+                if controller_return == 11:
+                    # Next episode
+                    break
+
+                if controller_return == 6:
+                    # publish intention
+                    pub_str = "Intention Determined"
+                    intention_pub.publish(pub_str)
+
+                world.tick(clock)
+                world.render(display)
+                pygame.display.flip()
+
+            spwnr.remove()
+            # Stop the rosbag recording
+            if rosbag_proc:
+                command = "rosnode kill /carla_rosbag"
                 command = shlex.split(command)
-                rosbag_proc = None
-                if args.record:
-                    rosbag_proc = subprocess.Popen(command)
-                    client.start_recorder("parking_p%s_s%d_e%d.log" % (args.s_id, scene, ep))
+                subprocess.Popen(command)
+                rosbag_proc.send_signal(subprocess.signal.SIGINT)
 
-                
 
-                spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
-                clock = pygame.time.Clock()
-
-                while True:
-                    clock.tick_busy_loop(60)
-                    if controller.parse_events(world, clock):
-                        break
-                    world.tick(clock)
-                    world.render(display)
-                    pygame.display.flip()
-
-                spwnr.remove()
-                # Stop the rosbag recording
-                if rosbag_proc:
-                    rosbag_proc.send_signal(subprocess.signal.SIGINT)
-                    client.stop_recorder()
-                # roslaunch_proc.send_signal(subprocess.signal.SIGINT)
-                world.restart()
+                client.stop_recorder()
+            # roslaunch_proc.send_signal(subprocess.signal.SIGINT)
+            world.restart()
             print('Done with ep loop')
-
-        print('Done with scene loop')
                 # world.destroy()
+
     except Exception as e:
         print('got an exception', e)
 
     finally:
+        if rosbag_proc:
+            command = "rosnode kill /carla_rosbag"
+            command = shlex.split(command)
+            subprocess.Popen(command)
+            rosbag_proc.send_signal(subprocess.signal.SIGINT)
+
+            client.stop_recorder()
         if drone_camera:
             drone_camera.destroy()
         if world is not None:
-            spwnr.remove()
+            # spwnr.remove()
             world.destroy()
 
         pygame.quit()
@@ -222,8 +261,14 @@ def main():
         type=int)
 
     argparser.add_argument(
+        '-t', '--trail', 
+        help="trail number",
+        required=True,
+        type=int)
+
+    argparser.add_argument(
         '-r', '--record', 
-        help="id of the subject",
+        help="Record rosbag and log",
         default=0,
         type=int)
 

@@ -57,6 +57,9 @@ import random
 import re
 import weakref
 
+# import rospy
+# from std_msgs.msg import String
+
 if sys.version_info >= (3, 0):
 
     from configparser import ConfigParser
@@ -259,6 +262,9 @@ class DualControl(object):
         self._brake_idx = int(3)
         self._reverse_idx = int(5)
         self._handbrake_idx = int(4)
+
+        # rospy.init_node('intention_node', anonymous=True)
+        # self.intention_pub = rospy.Publisher('intention', String, queue_size=10)
         '''
         self._steer_idx = int(
             self._parser.get('G27 Racing Wheel', 'steering_wheel'))
@@ -429,21 +435,29 @@ class DualControl(object):
                 # print(event.button)
                 if event.button == 0:
                     # world.restart()
-                    world.camera_manager.toggle_camera()
+                    # world.camera_manager.toggle_camera()
+                    pass
                 elif event.button == 1:
                     world.hud.toggle_info()
                 elif event.button == 2:
-                    world.camera_manager.toggle_camera()
+                    # world.camera_manager.toggle_camera()
+                    pass
                 elif event.button == 3:
                     world.next_weather()
+                    pass
                 elif event.button == self._reverse_idx:
                     self._control.gear = 1 if self._control.reverse else -1
 
+                # Send the intention flag
                 elif event.button == 6:
-                    print("Intention Determined")
+                    # print("Intention Determined")
+                    return 6
+
+                elif event.button == 10:
+                    return 10
                 # Exit the current episode
                 elif event.button == 11:
-                    return True
+                    return 11
 
                 elif event.button == 14:
                     self._control.reverse = False
@@ -458,6 +472,10 @@ class DualControl(object):
                     world.camera_manager.next_sensor()
 
             elif event.type == pygame.JOYBUTTONUP:
+                # if event.button == 4:
+                #     # pub_str = "Intention Determined"
+                #     # self.intention_pub.publish(pub_str)
+                #     return 4
                 if event.button == 14 or event.button == 15:
                     self._control.gear = 0         
                     self._control.reverse = False 
