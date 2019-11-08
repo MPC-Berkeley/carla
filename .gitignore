@@ -44,3 +44,7 @@ _out*
 _site
 core
 profiler.csv
+
+*.bag
+*.mat
+*.pkl

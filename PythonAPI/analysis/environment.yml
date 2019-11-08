@@ -1,0 +1,30 @@
+name: carla_analysis
+channels:
+- defaults
+- conda-forge
+- menpo
+dependencies:
+- python=3.6
+- numpy
+- scipy
+- matplotlib
+- moviepy
+- pandas
+- jupyter
+- pillow
+- autograd
+#- tensorflow-gpu
+#- nltk
+#- keras
+- scikit-image
+- scikit-learn
+- seaborn
+- bokeh
+- opencv3
+- ros-rosbag
+#- flask
+#- flask-socketio
+#- cvxopt
+#- pytorch
+#- torchvision
+#- cudatoolkit=9.0
