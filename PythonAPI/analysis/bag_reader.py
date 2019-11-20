@@ -20,6 +20,35 @@ def extract_roll_pitch_yaw(q):
     r, p, y = euler_from_quaternion((q.x, q.y, q.z, q.w))
     return [r,p,y]
 
+def outlier_removal(res_dict, position_thresh=1.):
+    # Imperfect method, just look for jumps at the end of the rosbag recording.
+    # Check out ego's odometry to get a t_final.
+    # Remove data from other fields which have t > t_final.
+    
+    final_time = None; final_ind = None
+    for i in range( 1, len(res_dict['ego_odometry_list'])):
+        prev_odom = res_dict['ego_odometry_list'][i-1]
+        new_odom  = res_dict['ego_odometry_list'][i]
+        
+        dt = new_odom['time'] - prev_odom['time']
+        prev_position = np.array(prev_odom['position'])
+        prev_velocity = np.array(prev_odom['linear_velocity'])
+        
+        est_new_position = prev_position + dt * prev_velocity
+        
+        new_position = np.array(new_odom['position'])
+        
+        if np.linalg.norm(new_position - est_new_position) > position_thresh:
+            final_time = prev_odom['time']
+            final_ind = i
+            break
+    if final_time is not None:
+        print('\tOutlier detected.  Setting final time %.3f vs. last entry at time %.3f for ego odom.' % \
+              (final_time, res_dict['ego_odometry_list'][-1]['time'])) 
+        res_dict['ego_odometry_list'] = res_dict['ego_odometry_list'][:final_ind]
+    
+    # TODO: remove the corresponding outliers in GPS and all other time-varying entries.  Not implemented for now.
+           
 def process_bag(bag):
     b = rosbag.Bag(bag)
     topics = b.get_type_and_topic_info().topics.keys()
@@ -140,9 +169,7 @@ def process_bag(bag):
         ego_odometry_entry['orientation'] = extract_roll_pitch_yaw(msg.pose.pose.orientation)
         ego_odometry_entry['linear_velocity'] = extract_item_xyz(msg.twist.twist.linear)
         ego_odometry_entry['angular_velocity'] = extract_item_xyz(msg.twist.twist.angular)
-        # Disgard the outlier at the end of the bag
-        if ego_odometry_entry['position'][0] > 1e-3:
-            ego_odometry_list.append(ego_odometry_entry)
+        ego_odometry_list.append(ego_odometry_entry)
     res_dict['ego_odometry_list'] = ego_odometry_list
             
     # Other Vehicle Odometry
@@ -199,5 +226,5 @@ def process_bag(bag):
             plt.imshow(cv_image)
             image_viewed = True
     '''
-    
+    outlier_removal(res_dict)
     return res_dict
