@@ -55,6 +55,56 @@ class VehicleEntry(object):
         self.brake = brake   
         self.steer_angle = steer_angle
 
+''' Logging class just for one image only.  Need to address memory leak. '''
+class CarlaImageSaver(object):
+    def __init__(self, savedir):
+        os.makedirs(savedir, exist_ok=True)
+        self._savedir = savedir
+        self._fifo_queue = deque(maxlen=5000)
+        self._is_running = False
+
+    def start(self):
+        self._thread = threading.Thread(target=self._saving_thread_fncn)
+        self._thread.start()
+
+    def stop(self, finish_writing=True):
+        """ Stop the saver thread.
+            If finish_writing is True, then the queue will be emptied out first.
+        """
+        if finish_writing:
+            while self._is_running and len(self._fifo_queue) > 0:
+                print('Queue Length: %d' % len(self._fifo_queue))
+                time.sleep(0.1) # maybe a more elegant way to do this    
+
+        self._is_running = False
+        self._thread.join()
+
+    def add_image(self, frame_no, img):
+        if not self._is_running:
+            raise RuntimeError("The saving thread should be started first.")
+
+        self._fifo_queue.append([frame_no, img])
+
+    def _saving_thread_fncn(self):
+        self._is_running = True
+        while self._is_running:
+            try:
+                entry = self._fifo_queue.popleft()
+                frame_no = entry[0]; img = entry[1]
+                savename = '%s/%08d.png' % (self._savedir, frame_no)
+                if isinstance(img, carla.Image):
+                    img.save_to_disk(savename)
+                elif isinstance(img, np.ndarray):
+                    im_pil = Image.fromarray(img)
+                    im_pil.save(savename)
+                del entry[0], entry[1], entry
+            except IndexError:
+                pass # no images provided yet
+            except Exception as e:
+                # For example, no save method provided.
+                self._is_running = False
+                print('Error in save thread:', e)
+
 class Measurement(object):
     """ A single timestamped measurement containing images and a list of VehicleEntry objects."""
 
