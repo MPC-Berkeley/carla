@@ -45,9 +45,15 @@ def outlier_removal(res_dict, position_thresh=1.):
     if final_time is not None:
         print('\tOutlier detected.  Setting final time %.3f vs. last entry at time %.3f for ego odom.' % \
               (final_time, res_dict['ego_odometry_list'][-1]['time'])) 
+
+    # Remove the corresponding outliers in ego-odometry, GPS and all other time-varying entries
         res_dict['ego_odometry_list'] = res_dict['ego_odometry_list'][:final_ind]
-    
-    # TODO: remove the corresponding outliers in GPS and all other time-varying entries.  Not implemented for now.
+
+        res_dict['ego_collision_list']    = res_dict['ego_collision_list'][:final_ind]
+        res_dict['ego_control_list']      = res_dict['ego_control_list'][:final_ind]
+        res_dict['ego_gps_list']          = res_dict['ego_gps_list'][:final_ind]
+        res_dict['vehicle_odometry_dict'] = res_dict['vehicle_odometry_dict'][:final_ind]
+        res_dict['vehicle_object_lists']  = res_dict['vehicle_object_lists'][:final_ind]
            
 def process_bag(bag):
     b = rosbag.Bag(bag)
