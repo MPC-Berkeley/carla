@@ -132,6 +132,8 @@ def game_loop(args):
         np.random.seed(0)
         random.seed(0)
 
+        spwnr = None
+
         for ep in range(2):
             print('trail: %d , Episode: %d' % (trail, ep))
 
@@ -139,7 +141,7 @@ def game_loop(args):
             command = "roslaunch carla_ros_bridge carla_ros_bridge.launch"
             command = shlex.split(command)              
             # roslaunch_proc = subprocess.Popen(command)
-            time.sleep(0.1)
+            #time.sleep(0.1)
 
             # ROSBAG RECORD
             command = "rosbag record -a -o bags/parking_p%d_t%d_e%d.bag __name:=carla_rosbag" % (args.s_id, trail, ep)
@@ -179,8 +181,7 @@ def game_loop(args):
                 world.tick(clock)
                 world.render(display)
                 pygame.display.flip()
-
-            spwnr.remove()
+            
             # Stop the rosbag recording
             if rosbag_proc:
                 command = "rosnode kill /carla_rosbag"
@@ -190,6 +191,8 @@ def game_loop(args):
 
 
                 client.stop_recorder()
+
+            spwnr.remove()
             # roslaunch_proc.send_signal(subprocess.signal.SIGINT)
             world.restart()
             print('Done with ep loop')
@@ -209,7 +212,7 @@ def game_loop(args):
         if drone_camera:
             drone_camera.destroy()
         if world is not None:
-            # spwnr.remove()
+            spwnr.remove()
             world.destroy()
 
         pygame.quit()
