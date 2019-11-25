@@ -13,6 +13,7 @@ dependencies:
 - jupyter
 - pillow
 - autograd
+- filterpy
 #- tensorflow-gpu
 #- nltk
 #- keras
