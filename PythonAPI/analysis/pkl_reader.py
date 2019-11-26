@@ -2,13 +2,14 @@ import numpy as np
 import scipy.io as sio
 
 # Function to get all possible goals, along with occupancy.
+# Each goal is an array [x,y,free].
 def extract_goals(res_dict):
     # Extract goal options
     occupied_spots = []
     for static_vehicle in res_dict['vehicle_object_lists'][0]:
         xv = round(static_vehicle['position'][0], 2)
         yv = round(static_vehicle['position'][1], 2)
-        occupied_spots.append([xv, yv, 1])
+        occupied_spots.append([xv, yv])
     occupied_spots = np.array(occupied_spots)
 
     goals = []
@@ -17,14 +18,13 @@ def extract_goals(res_dict):
     for idx, x in enumerate(xg):
         for y in yg:
             if idx == 0 or idx == len(xg) - 1:
-                continue
-            diffs = np.sum(np.square( occupied_spots[:,:2] - np.array([x,y]) ), axis= 1)
+                continue # we are limiting in this case to the middle two parking columns
+            diffs = np.sum(np.square( occupied_spots - np.array([x,y]) ), axis= 1)
             if np.min(diffs) < 1e-6:
-                goals.append([x,y,0])
+                goals.append([x,y,0]) # near a vehicle, hence occupied
             else:
-                goals.append([x,y,1])
+                goals.append([x,y,1]) # free
     goals = np.array(goals)
-    
     return goals
 
 # Function to get the control information for ego.
@@ -65,14 +65,18 @@ def extract_control_info(res_dict):
     
     return ego_control_dict
 
-# Function to determine signed forward speed based on gear but also with outlier detection.
+# Function to determine signed forward velocity based on gear but also with outlier detection.
 # It is possible to reverse while moving forward or vice-versa (although we hope rare).
 def get_longitudinal_velocity(time, vx, vy, v_prev, ego_control_dict):
     speed = np.sqrt(vx**2 + vy**2)
     gear_ind = np.argmax(time <= ego_control_dict['t'] )
-    vsign_from_gear = -1.0 if ego_control_dict['reverse'][gear_ind] > 0 else 1.0
+    
+    # Based on the gear, we can guess the sign of the forward velocity.
+    vsign_from_gear = -1.0 if ego_control_dict['reverse'][gear_ind] > 0 else 1.0 
     vel_from_gear = vsign_from_gear * speed
-        
+   
+    # If the velocity is very small or is consistent with the previous result, use the gear-based vel.
+    # Else check for outliers.
     if speed < 0.05 or v_prev is None or vsign_from_gear == np.sign(v_prev):
         return vel_from_gear # vel signs match up or no history to go off of.
     else:
@@ -86,20 +90,19 @@ def get_longitudinal_velocity(time, vx, vy, v_prev, ego_control_dict):
             return vel_from_gear
         
 # Function to get full state and intent (goal index) trajectory for a single demonstration.
-def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, min_vel_thresh=0.01):
+def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, min_vel_thresh=0.01, exclude_collisions=False):
     '''
     prune_start: if True, remove non-moving portion of data at the start
     prune_end:   if True, remove non-moving portion of data at the end
     min_vel_thresh: minimum velocity (m/s) above which vehicle is moving
-    TODO: handle collisions + bad data somehow, maybe return []
+    exclude_collisions: Raises a 
     '''
-    # Extract intention signal time
-    # TODO: what to do if the intention list has multiple entries.
-    #assert( len(res_dict['intention_time_list']) == 1 ) 
+    # Extract intention signal time (first button press) 
     intention_time = res_dict['intention_time_list'][0]
 
     # See if there were any collisions.
     # TODO: what to do if any collisions. Maybe return empty?
+    
     if len(res_dict['ego_collision_list']) > 0:
         print('Collisions encountered: ')
 
@@ -110,10 +113,9 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
                     print(k,v, veh_name)
                 else:
                     print(k,v)
-            print('\n')
-        print('\n')
-#         TODO: In the BIG for loop
-#         return None, None, None, None, None
+        
+        if exclude_collisions:
+            raise ValueError("Collision encountered, so skipping this instance.")
     
     # Get reverse gear information to aid with speed sign.
     ego_control_dict =  extract_control_info(res_dict)
@@ -167,3 +169,56 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     
     return ego_trajectory, start_ind, switch_ind, end_ind, goal_ind
 
+def interpolate_heading(t_interp, t_ref, psi_ref):
+    raise NotImplementedError("TODO") 
+
+def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_intent = False):
+    x_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,1])
+    y_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,2]) 
+    heading_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,3]) # TODO:wraparound issue
+    v_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,4])
+    yawrate_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,5])
+    
+    if include_intent:
+        if np.max(t_interp) >= ego_trajectory[switch_ind,0]:
+            intent = ego_trajectory[switch_ind, 6] * np.ones(x_interp.shape)
+        else:
+            intent = -1 * np.ones(x_interp.shape)
+            
+        return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp, intent))
+    else:
+        return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp))
+    
+def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind, end_ind, goal_ind, goals,\
+                                           Nhist=5, Npred=20, Nskip=5, dt=0.1, ego_frame=False):
+    features = []; labels = []; goal_snpts = []
+    
+    t_range_start = ego_trajectory[start_ind, 0] + Nhist * dt
+    t_range_end   = ego_trajectory[end_ind, 0] - Npred * dt
+    t_skip = Nskip * dt
+    
+    for t_snippet in np.arange(t_range_start, t_range_end + 0.5 * t_skip, t_skip):
+        t_hist = [x*dt + t_snippet for x in range(-Nhist + 1, 1)] # -N_hist + 1, ... , 0 -> N_hist steps
+        t_pred = [x*dt + t_snippet for x in range(1, Npred+1)] # 1, ..., N_pred -> N_pred steps
+    
+        feature = interpolate_ego_trajectory(ego_trajectory, t_hist, switch_ind, include_intent=False)
+        label   = interpolate_ego_trajectory(ego_trajectory, t_pred, switch_ind, include_intent=True)
+        features.append(feature)
+        labels.append(label)
+        goal_snpts.append(goals.copy())
+        
+    goal_snpts = np.array(goal_snpts)
+#     Transform all snippets into ego frame, if ego_frame=True
+    if ego_frame:
+        for id_snpt in range(len(features)):
+            current = features[id_snpt][-1, :].copy()
+            for id_f in range(Nhist):
+                features[id_snpt][id_f, :3] -= current[0:3]
+                
+            for id_l in range(Npred):
+                labels[id_snpt][id_l, :3] -= current[0:3]
+            
+            for id_g in range(len(goals)):
+                goal_snpts[id_snpt][id_g, 0:2] -= current[0:2]
+                
+    return features, labels, goal_snpts
