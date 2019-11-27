@@ -134,7 +134,7 @@ def game_loop(args):
 
         spwnr = None
 
-        for ep in range(2):
+        for ep in range(10):
             print('trail: %d , Episode: %d' % (trail, ep))
 
             # ROSBAG RECORD
