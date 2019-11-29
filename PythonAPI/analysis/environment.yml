@@ -17,6 +17,7 @@ dependencies:
 #- tensorflow-gpu
 #- nltk
 #- keras
+- pydot
 - scikit-image
 - scikit-learn
 - seaborn
