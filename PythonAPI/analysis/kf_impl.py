@@ -1,19 +1,29 @@
 import numpy as np
 import matplotlib.pyplot as plt 
 from matplotlib.patches import Rectangle, Ellipse
-#import pickle as pkl 
-#import pdb
 
-#from filterpy.kalman import MerweScaledSigmaPoints
-#from filterpy.kalman import UnscentedKalmanFilter as UKF
+'''
+TODO: needs a lot of refactoring.
+
+(1) make a KF base class and reduce code reuse.
+(2) more resistant to input sizes, pad state size if needed
+(3) make it easier to use with snippets rather than complete sequences (e.g. fitting Q)
+'''
+
+def fix_angle(diff_ang):
+	while diff_ang > np.pi:
+		diff_ang -= 2 * np.pi
+	while diff_ang < -np.pi:
+		diff_ang += 2 * np.pi
+	assert(-np.pi <= diff_ang and diff_ang <= np.pi)
+	return diff_ang
 
 class EKF_CV_MODEL(object):
-	# Modified from https://github.com/rlabbe/filterpy/blob/master/filterpy/kalman/EKF.py
 	def __init__(self, 
 		         x_init = np.zeros(5),                       # initial state guess
 		         P_init = np.eye(5),                         # initial state covariance guess
-		         Q = np.diag([0.1, 0.1, 0.01, 1., 0.1]),    # disturbance covariance
-		         R = np.diag([1e-3]*3),               	 # measurement covariance
+		         Q = np.diag([0.1, 0.1, 0.01, 1., 0.1]),     # disturbance covariance
+		         R = np.diag([1e-3]*3),               	     # measurement covariance
 		         dt = 0.1                                    # model discretization time
 		         ):
 
@@ -47,7 +57,7 @@ class EKF_CV_MODEL(object):
 
 	def predict(self):
 		self.x = EKF_CV_MODEL._f_cv(self.x, self.dt)
-
+		self.x[2] = fix_angle(self.x[2])
 		A = EKF_CV_MODEL._f_cv_jacobian(self.x, self.dt)
 		#A = EKF_CV_MODEL._f_cv_num_jacobian(self.x, self.dt)
 		self.P =  A @ self.P @ A.T + self.Q
@@ -56,6 +66,7 @@ class EKF_CV_MODEL(object):
 		inv_term = self.H @ self.P @ self.H.T + self.R
 		K = self.P @ self.H.T @ np.linalg.pinv(inv_term)
 		self.x = self.x + K @ (measurement - self.H @ self.x)
+		self.x[2] = fix_angle(self.x[2])
 		self.P = (np.eye(self.nx) - K @ self.H) @ self.P
 
 	def get_x(self):
@@ -99,23 +110,24 @@ class EKF_CV_MODEL(object):
 		return jac 
 
 	@staticmethod
-	def _identify_Q(x_sequence, nx=5):
+	def _identify_Q(x_sequence, dt=0.1, nx=5):
 		Q_est = np.zeros((nx,nx))
 		N = len(x_sequence)
 		for i in range(1, N):
-			w = x_sequence[i] - x_sequence[i-1]
+			x_curr = x_sequence[i-1]
+			x_next = x_sequence[i]
+			x_next_model = EKF_CV_MODEL._f_cv(x_curr, dt)
+			w = x_next - x_next_model
 			Q_est += 1./N * np.outer(w,w)
 		return Q_est
 
-
 class EKF_CA_MODEL(object):
-	# Modified from https://github.com/rlabbe/filterpy/blob/master/filterpy/kalman/EKF.py
 	def __init__(self, 
-		         x_init = np.zeros(7),                       # initial state guess
-		         P_init = np.eye(7),                         # initial state covariance guess
+		         x_init = np.zeros(7),                               # initial state guess
+		         P_init = np.eye(7),                                 # initial state covariance guess
 		         Q = np.diag([0.1, 0.1, 0.01, 1., 0.1, 1., 0.1]),    # disturbance covariance
-		         R = np.diag([1e-3]*3),               	 # measurement covariance
-		         dt = 0.1                                    # model discretization time
+		         R = np.diag([1e-3]*3),               	             # measurement covariance
+		         dt = 0.1                                            # model discretization time
 		         ):
 
 		self.nx = 7 # state: [x, y, psi, v, omega, v_dot, omega_dot]
@@ -148,9 +160,7 @@ class EKF_CA_MODEL(object):
 
 	def predict(self):
 		self.x = EKF_CA_MODEL._f_ca(self.x, self.dt)
-		#Anum = EKF_CA_MODEL._f_ca_num_jacobian(self.x, self.dt)
 		A = EKF_CA_MODEL._f_ca_jacobian(self.x, self.dt)
-		#print('Norm: ', np.linalg.norm(Anum - A))
 		self.P =  A @ self.P @ A.T + self.Q
 
 	def update(self, measurement): 
@@ -204,136 +214,20 @@ class EKF_CA_MODEL(object):
 			jac[:,i] = (f_plus - f_minus) / (2.*eps)
 		return jac
 
-'''
-class UKF_CV_MODEL(object):
-	# Modified from https://github.com/rlabbe/filterpy/blob/master/filterpy/kalman/UKF.py
-	# Having issues with positive definiteness of (lambda + n) * P in sigma points, need high alpha.
-	# Also issue with residuals where sign of heading is flipping for really small variations in sin/cos sum.
-	# For these reasons, dropping this filter for now.
-	def __init__(self, 
-		         x_init = np.zeros(5),                       # initial state guess
-		         P_init = np.eye(5),                         # initial state covariance guess
-		         Q = np.diag([0.1, 0.1, 0.01, 1., 0.1]),    # disturbance covariance
-		         R = np.diag([1e-3]*3),               	 # measurement covariance
-		         dt = 0.1                                    # model discretization time
-		         ):
-
-		nx = 5 # state: [x, y, psi, v, omega]
-		nz = 3 # obs: [x ,y, psi]
-
-		if Q.shape != (nx,nx):
-			raise ValueError('Q should be a %d by %d matrix' % (nx,nx) )
-		if R.shape != (nz, nz):
-			raise ValueError('R should be a %d by %d matrix' % (nz, nz))
-		if x_init.shape != (nx,):
-			raise ValueError('x_init should be a %d vector' % (nz, nz))
-		if P_init.shape != (nx, nx):
-			raise ValueError('P_init should be a %d by %d matrix' % (nx, nx))
-
-		# Could make these model params in constructor as well.
-		points = MerweScaledSigmaPoints(n=nx, 
-			                            alpha=0.75,
-			                            beta=2., 
-			                            kappa=-2.,
-			                            subtract=UKF_CV_MODEL._residual_x_z)
-		self.ukf = UKF(dim_x=nx,
-		               dim_z=nz, 
-		               fx=UKF_CV_MODEL._f_cv, 
-		               hx=UKF_CV_MODEL._h_cv,
-		               dt=dt, 
-		               points=points, 
-		               x_mean_fn=UKF_CV_MODEL._x_mean, 
-		               z_mean_fn=UKF_CV_MODEL._z_mean, 
-		               residual_x=UKF_CV_MODEL._residual_x_z, 
-		               residual_z=UKF_CV_MODEL._residual_x_z)
-
-		# initial state and covariance estimate
-		self.ukf.x = x_init 
-		self.ukf.P = P_init
-
-		# process noise
-		self.ukf.Q = Q
-
-		# measurement noise
-		self.ukf.R = R
-
-	def predict(self):
-		self.ukf.predict()
-		self.ukf.sigmas_f = self.ukf.points_fn.sigma_points(self.ukf.x, self.ukf.P)
-
-
-	def update(self, measurement):
-		self.ukf.update(measurement)
-
-	def get_x(self):
-		return self.ukf.x.copy()
-
-	def get_P(self):
-		return self.ukf.P.copy()
-
 	@staticmethod
-	def _f_cv(z, dt):
-		z_new = np.zeros(len(z))
-		z_new[0] = z[0] + z[3] * np.cos(z[2]) * dt  #x
-		z_new[1] = z[1] + z[3] * np.sin(z[2]) * dt  #y
-		z_new[2] = z[2] + z[4] * dt                 #theta
-		z_new[3] = z[3]                             #v
-		z_new[4] = z[4]                             #omega
-		return z_new
-	
-	@staticmethod        
-	def _h_cv(z):
-		return [z[0], z[1], UKF_CV_MODEL._normalize_angle(z[2])]  
-
-	@staticmethod
-	def _x_mean(sigmas, Wm):
-		nx = sigmas.shape[1]
-		x = np.zeros(nx)
-
-		sum_sin = np.sum(np.dot(np.sin(sigmas[:, 2]), Wm))
-		sum_cos = np.sum(np.dot(np.cos(sigmas[:, 2]), Wm))
-		for i in range(nx):
-		    if i is 2:
-		        x[i] = np.arctan2(sum_sin, sum_cos)       # angle weighted avg
-		    else:
-		        x[i] = np.sum(np.dot(sigmas[:, i], Wm)) # normal weighted avg
-		
-		if np.abs( np.mean(sigmas, axis=0)[2] - x[2] ) > 0.1:
-			pass
-			#pdb.set_trace()
-		return x
-
-	@staticmethod
-	def _z_mean(sigmas, Wm):
-		nz = sigmas.shape[1]
-		z = np.zeros(nz)
-
-		sum_sin = np.sum(np.dot(np.sin(sigmas[:, 2]), Wm))
-		sum_cos = np.sum(np.dot(np.cos(sigmas[:, 2]), Wm))
-		for i in range(nz):
-		    if i is 2:
-		        z[i] = np.arctan2(sum_sin, sum_cos)
-		    else:
-		        z[i] = np.sum(np.dot(sigmas[:,i], Wm))
-		return z
-
-	@staticmethod
-	def _normalize_angle(ang):
-		while ang >= np.pi:
-		    ang -= 2 * np.pi
-		while ang <= -np.pi:
-		    ang += 2 * np.pi
-		return ang
-
-	@staticmethod
-	def _residual_x_z(a, b):
-		y = a - b
-		y[2] = UKF_CV_MODEL._normalize_angle(y[2])
-		return y
-'''
+	def _identify_Q(x_sequence, dt=0.1, nx=7):
+		Q_est = np.zeros((nx,nx))
+		N = len(x_sequence)
+		for i in range(1, N):
+			x_curr = x_sequence[i-1]
+			x_next = x_sequence[i]
+			x_next_model = EKF_CA_MODEL._f_ca(x_curr, dt)
+			w = x_next - x_next_model
+			Q_est += 1./N * np.outer(w,w)
+		return Q_est
 
 if __name__ == '__main__':
-	filter_choice = 'ukf' # 'cv', 'ca', 'ukf'
+	filter_choice = 'cv' # 'cv', 'ca'
 
 	# Dubin's car example
 	dubins_traj = [[0., 0., 0., 10., 0.01]]
@@ -356,26 +250,22 @@ if __name__ == '__main__':
 	np.set_printoptions(precision=2)
 	xfilt = []; xfiltstd = []
 	
-	init = dubins_traj[0,:].tolist()
-	init.extend([0,0])
 	if filter_choice == 'cv':
 		kf = EKF_CV_MODEL(x_init = dubins_traj[0,:], dt=dt, P_init = np.eye(5) * 1.)
 	elif filter_choice == 'ca':
+		init = dubins_traj[0,:].tolist() # hacky
+		init.extend([0,0])
 		kf = EKF_CA_MODEL(x_init = np.array(init), dt=dt, P_init = np.eye(7) * 1.)
-	elif filter_choice == 'ukf':
-		kf = UKF_CV_MODEL(x_init = dubins_traj[0,:], dt=dt, P_init = np.eye(5) * 1.)
 	else:
 		raise ValueError("Invalid filter choice: ", filter_choice)
 
-	print(EKF_CV_MODEL._identify_Q(dubins_traj))
+	print(kf._identify_Q(dubins_traj))
 
 	for i in range(len(dubins_traj)):
 		kf.predict()
 		kf.update(dubins_traj[i,:3])
 		x = kf.get_x()
 		P = kf.get_P()
-		#print(i,x,P,'\n')
-
 		xfilt.append(x)
 		xfiltstd.append( np.sqrt(np.diag(P)) )
 
@@ -388,8 +278,6 @@ if __name__ == '__main__':
 		xpred.append(x)
 		xpredstd.append( np.sqrt(np.diag(P)) )
 		
-		#print(i,x,P,'\n')
-
 	xfilt = np.array(xfilt)
 	xfiltstd = np.array(xfiltstd)
 	xpred = np.array(xpred)
@@ -402,8 +290,6 @@ if __name__ == '__main__':
 	plt.plot(xfilt[:,0], xfilt[:,1], 'r.')
 	plt.plot(xpred[:,0], xpred[:,1], 'c')
 	plt.plot(dubins_traj[:,0], dubins_traj[:,1], 'k')
-	#for i in range(xpred.shape[0]):
-	#	rect = Ellipse((xpred[i,0] - xpredstd[i,0], xpred[i,1] - xpredstd[i,1] ), 2*xpredstd[i,0], 2*xpredstd[i,1], alpha=0.5, color='c')
 	plt.title('Position: X vx Y')
 
 	plt.figure()

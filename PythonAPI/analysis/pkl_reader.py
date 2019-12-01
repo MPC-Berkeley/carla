@@ -208,15 +208,17 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
         goal_snpts.append(goals.copy())
         
     goal_snpts = np.array(goal_snpts)
-#     Transform all snippets into ego frame, if ego_frame=True
+    # Transform all snippets into ego frame, if ego_frame=True
+    # TODO: decide how to do this correctly.  Either a proper transformation matrix
+    # or else keep the coordinate axes aligned the same way (i.e. use global heading).
     if ego_frame:
         for id_snpt in range(len(features)):
             current = features[id_snpt][-1, :].copy()
             for id_f in range(Nhist):
-                features[id_snpt][id_f, :3] -= current[0:3]
+                features[id_snpt][id_f, :2] -= current[0:2]
                 
             for id_l in range(Npred):
-                labels[id_snpt][id_l, :3] -= current[0:3]
+                labels[id_snpt][id_l, :2] -= current[0:2]
             
             for id_g in range(len(goals)):
                 goal_snpts[id_snpt][id_g, 0:2] -= current[0:2]
