@@ -100,9 +100,7 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     # Extract intention signal time (first button press) 
     intention_time = res_dict['intention_time_list'][0]
 
-    # See if there were any collisions.
-    # TODO: what to do if any collisions. Maybe return empty?
-    
+    # See if there were any collisions and return error if exclude_collisions is True.
     if len(res_dict['ego_collision_list']) > 0:
         print('Collisions encountered: ')
 
@@ -169,13 +167,11 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     
     return ego_trajectory, start_ind, switch_ind, end_ind, goal_ind
 
-def interpolate_heading(t_interp, t_ref, psi_ref):
-    raise NotImplementedError("TODO") 
 
 def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_intent = False):
     x_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,1])
     y_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,2]) 
-    heading_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,3]) # TODO:wraparound issue
+    heading_interp = np.interp(t_interp, ego_trajectory[:,0], np.unwrap(ego_trajectory[:,3]))
     v_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,4])
     yawrate_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,5])
     
@@ -189,6 +185,16 @@ def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_int
     else:
         return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp))
     
+
+# Common code (TODO: add to a utils.py)
+def fix_angle(diff_ang):
+    while diff_ang > np.pi:
+        diff_ang -= 2 * np.pi
+    while diff_ang < -np.pi:
+        diff_ang += 2 * np.pi
+    assert(-np.pi <= diff_ang and diff_ang <= np.pi)
+    return diff_ang
+
 def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind, end_ind, goal_ind, goals,\
                                            Nhist=5, Npred=20, Nskip=5, dt=0.1, ego_frame=False):
     features = []; labels = []; goal_snpts = []
@@ -209,18 +215,24 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
         
     goal_snpts = np.array(goal_snpts)
     # Transform all snippets into ego frame, if ego_frame=True
-    # TODO: decide how to do this correctly.  Either a proper transformation matrix
-    # or else keep the coordinate axes aligned the same way (i.e. use global heading).
+    # TODO: check if transform is done correctly.
     if ego_frame:
         for id_snpt in range(len(features)):
             current = features[id_snpt][-1, :].copy()
+            th = current[2]
+            R = np.array([[ np.cos(th), np.sin(th)], \
+                          [-np.sin(th), np.cos(th)]])
+            curr_position = current[:2]
+
             for id_f in range(Nhist):
-                features[id_snpt][id_f, :2] -= current[0:2]
+                features[id_snpt][id_f, :2] = R @ (features[id_snpt][id_f, :2] - curr_position)
+                features[id_snpt][id_f, 2] = fix_angle(features[id_snpt][id_f,2] - th)
                 
             for id_l in range(Npred):
-                labels[id_snpt][id_l, :2] -= current[0:2]
+                labels[id_snpt][id_l, :2] = R @ (labels[id_snpt][id_l, :2] - curr_position)
+                labels[id_snpt][id_l, 2] = fix_angle(labels[id_snpt][id_l, 2] - th)
             
             for id_g in range(len(goals)):
-                goal_snpts[id_snpt][id_g, 0:2] -= current[0:2]
-                
+                goal_snpts[id_snpt][id_g, :2] = R @ (goal_snpts[id_snpt][id_g, :2] - curr_position)
+
     return features, labels, goal_snpts
