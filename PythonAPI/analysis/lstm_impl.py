@@ -25,37 +25,54 @@ from sklearn.metrics import mean_absolute_error
 
 from datetime import datetime
 
+class CombinedLSTM(object):
+	def __init__(history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta):
+		traj_input_shape    = (history_shape[1], history_shape[2])
+		goal_input_shape    = (goals_position_shape[1],)
+		n_outputs           = one_hot_goal_shape[1]
+		intent_input_shape  = (n_outputs,)
+		future_horizon      = future_shape[1]
+		future_dim	        = future_shape[2]
+
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, hidden_dim=hidden_dim, beta=beta)
+		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
+
+	def fit(train_set, val_set):
+		self.goal_model.fit_model(train_set, val_set, num_epochs=100)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=100)
+
+	def predict(test_set):
+		goal_pred = self.goal_model.predict(test_set)
+
+		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
+		# a new field to the dictionary with top k goal predictions and loop in the predict function.
+		traj_pred = self.traj_pred.predict(test_set)
+		return goal_pred, traj_pred
+
+	def save(self):
+		raise NotImplementedError("XS: TODO")
+
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
-	def __init__(self, history_traj_data, goals_position, one_hot_goal, hidden_dim=100, beta=0.1):
-		super(GoalLSTM, self).__init__()
-		self.history_traj_data = history_traj_data
-		self.goals_position    = goals_position
-		self.one_hot_goal      = one_hot_goal
-
-		self.hidden_dim = hidden_dim
+	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, hidden_dim=100, beta=0.1):
 		self.beta       = beta
-
-		self.model      = None
+		self.model      = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
 		self.history    = None
 
-		traj_input_shape =(self.history_traj_data.shape[1], self.history_traj_data.shape[2])
-		goal_input_shape =(self.goals_position.shape[1],)
-		n_outputs = self.one_hot_goal.shape[1]
-		self.model = self.create_model(traj_input_shape, goal_input_shape, self.hidden_dim, n_outputs)
-		plot_model(self.model, to_file='goal_model.png')
-		print(self.model.summary())
+		''' Debug '''
+		#plot_model(self.model, to_file='goal_model.png')
+		#print(self.model.summary())
 
-	def max_ent_loss(self, y_true, y_pred):
+	def _max_ent_loss(self, y_true, y_pred):
 		loss1 = K.categorical_crossentropy(y_true, y_pred)
 		loss2 = K.categorical_crossentropy(y_pred, y_pred)
 		loss  = loss1 + self.beta * loss2
 		return loss
 
-	def top_k_acc(self, y_true, y_pred, k=3):
+	def _top_k_acc(self, y_true, y_pred, k=3):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
-	def create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
+	def _create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
 
@@ -81,17 +98,24 @@ class GoalLSTM(object):
 
 		# Compile model using loss
 		#     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-		model.compile(loss=self.max_ent_loss, optimizer='adam', metrics=[self.top_k_acc])
+		model.compile(loss=self._max_ent_loss, optimizer='adam', metrics=[self._top_k_acc])
 
 		return model
 
-	def fit_model(self, num_epochs=100):
+	def fit_model(self, train_set, val_set, num_epochs=100):
+		val_data = ([val_set['history_traj_data'], val_set['goal_position']], \
+					 val_set['one_hot_goal'])
+
 		self.history = self.model.fit(\
-					[self.history_traj_data, self.goals_position], \
-					self.one_hot_goal, \
-					epochs=num_epochs, validation_split=0.33)
+					[train_set['history_traj_data'], train_set['goal_position']], \
+					train_set['one_hot_goal'], \
+					epochs=num_epochs, 
+					validation_data=val_data)
 
 	def plot_history(self):
+		if not self.history:
+			raise AttributeError("No history available.  Run fit_model.")
+
 		plt.plot(self.history.history['top_k_acc'])
 		plt.plot(self.history.history['val_top_k_acc'])
 		plt.title('model accuracy')
@@ -109,39 +133,30 @@ class GoalLSTM(object):
 		plt.show()
 
 	def save_model(self):
+		if not self.history:
+			raise AttributeError("No history available.  Run fit_model.")
+
 		now = datetime.now()
 		dt_string = now.strftime('%m_%d_%H_%M')
 		file_name = "goal_model_%.4f_%s.h5" % (self.goal_history.history['val_top_k_acc'][-1], dt_string)
 		self.model.save(file_name)
 		print("Saved goal model to disk")
 
-	def predict(self, test_hist_traj, test_goals_position):
-		goal_pred = self.model.predict([test_hist_traj, test_goals_position])
+	def predict(self, test_set):
+		goal_pred = self.model.predict([test_set['history_traj_data'], test_set['goal_position']])
 		return goal_pred
 
 class TrajLSTM(object):
 	"""docstring for TrajLSTM"""
-	def __init__(self, history_traj_data, one_hot_goal, future_traj_data, hidden_dim=100):
-		super(TrajLSTM, self).__init__()
-		self.history_traj_data = history_traj_data
-		self.one_hot_goal      = one_hot_goal
-		self.future_traj_data  = future_traj_data
-
-		self.hidden_dim = hidden_dim
-
-		self.model      = None
+	def __init__(self, traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=100):
+		self.model = self._create_model(traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim)
 		self.history    = None
 
-		traj_input_shape=(history_traj_data.shape[1], history_traj_data.shape[2])
-		intent_input_shape=(one_hot_goal.shape[1],)
+		''' Debug '''
+		# plot_model(self.model,to_file='traj_model.png')
+		# print(self.model.summary())
 
-		future_horizon = future_traj_data.shape[1]
-		future_dim = future_traj_data.shape[2]
-		self.model = self.create_model(traj_input_shape, intent_input_shape, self.hidden_dim, future_horizon, future_dim)
-		plot_model(self.model,to_file='traj_model.png')
-		print(self.model.summary())
-
-	def create_model(self, traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim):
+	def _create_model(self, traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim):
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="trajectory_input")
@@ -176,13 +191,20 @@ class TrajLSTM(object):
 
 		return model
 
-	def fit_model(self, num_epochs=100):
+	def fit_model(self, train_set, val_set, num_epochs=100):
+		val_data = ([val_set['history_traj_data'], val_set['one_hot_goal']], \
+					 val_set['future_traj_data'])
+		
 		self.history = self.model.fit(\
-					[self.history_traj_data, self.one_hot_goal], \
-					self.future_traj_data, \
-					epochs=num_epochs, validation_split=0.33)
+					[train_set['history_traj_data'], train_set['one_hot_goal']], \
+					train_set['future_traj_data'], \
+					epochs=num_epochs, 
+					validation_data=val_data)
 
 	def plot_history(self):
+		if not self.history:
+			raise AttributeError("No history available.  Run fit_model.")
+
 		plt.plot(self.history.history['acc'])
 		plt.plot(self.history.history['val_acc'])
 		plt.title('model accuracy')
@@ -200,12 +222,16 @@ class TrajLSTM(object):
 		plt.show()
 
 	def save_model(self):
+		if not self.history:
+			raise AttributeError("No history available.  Run fit_model.")
+
 		now = datetime.now()
 		dt_string = now.strftime('%m_%d_%H_%M')
 		file_name = "traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
 		self.model.save(file_name)
 		print("Saved traj model to disk")
 
-	def predict(self, test_hist_traj, test_one_hot_goal):
-		traj_pred = self.model.predict([test_hist_traj, test_one_hot_goal])
+	def predict(self, test_set):
+		# TODO: how to incorporate goal prediction
+		traj_pred = self.model.predict([test_set['history_traj_data'], test_set['one_hot_goal']])
 		return traj_pred

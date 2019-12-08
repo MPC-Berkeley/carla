@@ -1,31 +1,25 @@
 import numpy as np
 import matplotlib.pyplot as plt 
 from matplotlib.patches import Rectangle, Ellipse
+from utils import fix_angle
+import pickle
+import datetime
+import pdb
 
 '''
-TODO: needs a lot of refactoring.
-
-(1) make a KF base class and reduce code reuse.
-(2) more resistant to input sizes, pad state size if needed
-(3) make it easier to use with snippets rather than complete sequences (e.g. fitting Q)
+Improvements:
+- variable input sizes (or better checking of arguments) for the filter
+- base KF class implementation in case of multiple KF implementatations
 '''
-
-def fix_angle(diff_ang):
-	while diff_ang > np.pi:
-		diff_ang -= 2 * np.pi
-	while diff_ang < -np.pi:
-		diff_ang += 2 * np.pi
-	assert(-np.pi <= diff_ang and diff_ang <= np.pi)
-	return diff_ang
 
 class EKF_CV_MODEL(object):
 	def __init__(self, 
-		         x_init = np.zeros(5),                       # initial state guess
-		         P_init = np.eye(5),                         # initial state covariance guess
-		         Q = np.diag([0.1, 0.1, 0.01, 1., 0.1]),     # disturbance covariance
-		         R = np.diag([1e-3]*3),               	     # measurement covariance
-		         dt = 0.1                                    # model discretization time
-		         ):
+				 x_init = np.zeros(5),                       # initial state guess
+				 P_init = np.eye(5),                         # initial state covariance guess
+				 Q = np.diag([0.1, 0.1, 0.01, 1., 0.1]),     # disturbance covariance
+				 R = np.diag([1e-3]*3),               	     # measurement covariance
+				 dt = 0.1                                    # model discretization time
+				 ):
 
 		self.nx = 5 # state: [x, y, psi, v, omega]
 		self.nz = 3 # obs: [x ,y, psi]
@@ -51,18 +45,43 @@ class EKF_CV_MODEL(object):
 
 		# measurement model (fixed)
 		self.H = np.array([[1,0,0,0,0], \
-			               [0,1,0,0,0], \
-			               [0,0,1,0,0]])
+						   [0,1,0,0,0], \
+						   [0,0,1,0,0]])
 		self.dt = dt
 
-	def predict(self):
+	def save(self):
+		kf_dict = {}
+		kf_dict['Q'] =  self.Q
+		kf_dict['R'] =  self.R
+		kf_dict['dt'] = self.dt
+
+		now = datetime.now()
+		dt_string = now.strftime('%m_%d_%H_%M')
+		fname = "kf_%s.pkl" % dt_string
+		pickle.dump(kf_dict, open(fname, 'wb'))
+
+	def fit(self, train_set, val_set):
+		self.Q = EKF_CV_MODEL._identify_Q_train(train_set, self.dt)
+
+		''' Debug '''
+		np.set_printoptions(precision=2)
+		print('Q identified as: ', self.Q)
+
+	def predict(self, test_set):
+		# sort of inverted version compared to LSTM method
+		N_pred = test_set['future_traj_data'][0].shape[0]
+		traj_pred = self.traj_prediction(test_set['history_traj_data'], N_pred) # TODO
+		goal_pred = self.goal_prediction(traj_pred, test_set['goal_position']) # TODO
+		# TODO: clean up and fix analysis
+		return goal_pred, traj_pred
+
+	def time_update(self):
 		self.x = EKF_CV_MODEL._f_cv(self.x, self.dt)
 		self.x[2] = fix_angle(self.x[2])
 		A = EKF_CV_MODEL._f_cv_jacobian(self.x, self.dt)
-		#A = EKF_CV_MODEL._f_cv_num_jacobian(self.x, self.dt)
 		self.P =  A @ self.P @ A.T + self.Q
 
-	def update(self, measurement): 
+	def measurement_update(self, measurement): 
 		inv_term = self.H @ self.P @ self.H.T + self.R
 		K = self.P @ self.H.T @ np.linalg.pinv(inv_term)
 		self.x = self.x + K @ (measurement - self.H @ self.x)
@@ -74,6 +93,40 @@ class EKF_CV_MODEL(object):
 
 	def get_P(self):
 		return self.P.copy()
+
+	def traj_prediction(self, x_hists, N_pred):
+		traj_pred = []
+		for x_hist in x_hists:	
+			# First init the KF with x_hist[0] for pose only.
+			self.x = x_hist[0,:]
+			self.x[3:] = 0. # velocity unknown, set to 0. WLOG
+			self.P = np.eye(5) # may adjust this to be state dependent
+
+			for i in range(1, x_hist.shape[0]):
+				self.time_update()
+				self.measurement_update(x_hist[i,:3]) # only pose
+				
+			# Then run predict for N_pred steps
+			x_pred = []; P_pred = []
+			for i in range(N_pred):
+				self.time_update()
+				x_pred.append(self.get_x())
+				P_pred.append(self.get_P())
+			
+			traj_pred.append(np.array(x_pred))
+			# P_pred not used for now.
+
+		return traj_pred
+
+	def goal_prediction(self, x_preds, goals):
+		goal_pred = np.zeros( (len(x_preds), 33) )
+		goal_pred[:,-1] = 1.
+		'''
+		for x_pred, goal_set in zip(x_preds, goals):
+			pass
+			# TODO
+		'''
+		return goal_pred
 
 	@staticmethod
 	def _f_cv(x, dt):
@@ -90,11 +143,11 @@ class EKF_CV_MODEL(object):
 		v = x[3] 
 		th = x[2]
 		return np.array([[1, 0, -v*np.sin(th)*dt, np.cos(th)*dt,  0], \
-			             [0, 1,  v*np.cos(th)*dt, np.sin(th)*dt,  0], \
-			             [0, 0,                1,             0, dt], \
-			             [0, 0,                0,             1,  0], \
-			             [0, 0,                0,             0,  1]
-			             ]).astype(np.float)
+						 [0, 1,  v*np.cos(th)*dt, np.sin(th)*dt,  0], \
+						 [0, 0,                1,             0, dt], \
+						 [0, 0,                0,             1,  0], \
+						 [0, 0,                0,             0,  1]
+						 ]).astype(np.float)
 	@staticmethod
 	def _f_cv_num_jacobian(x, dt, eps=1e-8):
 		nx = len(x)
@@ -110,7 +163,7 @@ class EKF_CV_MODEL(object):
 		return jac 
 
 	@staticmethod
-	def _identify_Q(x_sequence, dt=0.1, nx=5):
+	def _identify_Q_sequence(x_sequence, dt=0.1, nx=5):
 		Q_est = np.zeros((nx,nx))
 		N = len(x_sequence)
 		for i in range(1, N):
@@ -121,14 +174,47 @@ class EKF_CV_MODEL(object):
 			Q_est += 1./N * np.outer(w,w)
 		return Q_est
 
+	@staticmethod
+	def _identify_Q_train(train_set, dt=0.1):
+		# number of training instances
+		N_train = train_set['history_traj_data'].shape[0]
+
+		# number of discrete timesteps in one training instance - 1 (i.e. how many "diffs")
+		N_steps = train_set['history_traj_data'].shape[1] + train_set['future_traj_data'].shape[1] - 1
+		
+		# number of disturbance measurements from "diffs"
+		N_Q_fit = N_train * N_steps
+
+		# state dimension
+		nx = train_set['history_traj_data'].shape[2]
+
+		Q_est = np.zeros((nx, nx))
+
+		for i in range(N_train):
+			traj_full = np.concatenate((train_set['history_traj_data'][i], \
+										train_set['future_traj_data'][i]), \
+										axis = 0)
+			for j in range(1, traj_full.shape[0] - 1):
+				x_curr = traj_full[j-1]
+				x_next = traj_full[j]
+				x_next_model = EKF_CV_MODEL._f_cv(x_curr, dt)
+				w = x_next - x_next_model
+				w[2] = fix_angle(w[2])
+				Q_est += 1./N_Q_fit * np.outer(w,w)
+
+		return Q_est
+
+
+
+''' Code to be cleaned up.  WIP.
 class EKF_CA_MODEL(object):
 	def __init__(self, 
-		         x_init = np.zeros(7),                               # initial state guess
-		         P_init = np.eye(7),                                 # initial state covariance guess
-		         Q = np.diag([0.1, 0.1, 0.01, 1., 0.1, 1., 0.1]),    # disturbance covariance
-		         R = np.diag([1e-3]*3),               	             # measurement covariance
-		         dt = 0.1                                            # model discretization time
-		         ):
+				 x_init = np.zeros(7),                               # initial state guess
+				 P_init = np.eye(7),                                 # initial state covariance guess
+				 Q = np.diag([0.1, 0.1, 0.01, 1., 0.1, 1., 0.1]),    # disturbance covariance
+				 R = np.diag([1e-3]*3),               	             # measurement covariance
+				 dt = 0.1                                            # model discretization time
+				 ):
 
 		self.nx = 7 # state: [x, y, psi, v, omega, v_dot, omega_dot]
 		self.nz = 3 # obs: [x ,y, psi]
@@ -154,8 +240,8 @@ class EKF_CA_MODEL(object):
 
 		# measurement model (fixed)
 		self.H = np.array([[1,0,0,0,0,0,0], \
-			               [0,1,0,0,0,0,0], \
-			               [0,0,1,0,0,0,0]])
+						   [0,1,0,0,0,0,0], \
+						   [0,0,1,0,0,0,0]])
 		self.dt = dt
 
 	def predict(self):
@@ -192,13 +278,13 @@ class EKF_CA_MODEL(object):
 		v = x[3] 
 		th = x[2]
 		return np.array([[1, 0, -v*np.sin(th)*dt, np.cos(th)*dt,  0,  0,   0], \
-			             [0, 1,  v*np.cos(th)*dt, np.sin(th)*dt,  0,  0,   0], \
-			             [0, 0,                1,             0, dt,  0,   0], \
-			             [0, 0,                0,             1,  0, dt,   0], \
-			             [0, 0,                0,             0,  1,  0,  dt], \
-			             [0, 0,                0,             0,  0,  1,   0], \
-			             [0, 0,                0,             0,  0,  0,   1] \
-			             ]).astype(np.float)
+						 [0, 1,  v*np.cos(th)*dt, np.sin(th)*dt,  0,  0,   0], \
+						 [0, 0,                1,             0, dt,  0,   0], \
+						 [0, 0,                0,             1,  0, dt,   0], \
+						 [0, 0,                0,             0,  1,  0,  dt], \
+						 [0, 0,                0,             0,  0,  1,   0], \
+						 [0, 0,                0,             0,  0,  0,   1] \
+						 ]).astype(np.float)
 
 	@staticmethod
 	def _f_ca_num_jacobian(x, dt, eps=1e-8):
@@ -225,6 +311,7 @@ class EKF_CA_MODEL(object):
 			w = x_next - x_next_model
 			Q_est += 1./N * np.outer(w,w)
 		return Q_est
+'''
 
 if __name__ == '__main__':
 	filter_choice = 'cv' # 'cv', 'ca'
@@ -233,18 +320,18 @@ if __name__ == '__main__':
 	dubins_traj = [[0., 0., 0., 10., 0.01]]
 	dt = 0.1
 	for i in range(50):
-	    dubins_traj.append( EKF_CV_MODEL._f_cv(dubins_traj[-1], dt) )
+		dubins_traj.append( EKF_CV_MODEL._f_cv(dubins_traj[-1], dt) )
 	for i in range(50):
-	    if i == 0:
-	        dubins_traj[-1][4] = -0.01
-	        dubins_traj[-1][3] = 9.0
-	    dubins_traj.append( EKF_CV_MODEL._f_cv(dubins_traj[-1], dt) )
+		if i == 0:
+			dubins_traj[-1][4] = -0.01
+			dubins_traj[-1][3] = 9.0
+		dubins_traj.append( EKF_CV_MODEL._f_cv(dubins_traj[-1], dt) )
 	for i in range(50):
-	    if i == 0:
-	        dubins_traj[-1][4] = 0.
-	        dubins_traj[-1][3] = 5.0
-	    dubins_traj.append( EKF_CV_MODEL._f_cv(dubins_traj[-1], dt) )
-	    
+		if i == 0:
+			dubins_traj[-1][4] = 0.
+			dubins_traj[-1][3] = 5.0
+		dubins_traj.append( EKF_CV_MODEL._f_cv(dubins_traj[-1], dt) )
+		
 	dubins_traj = np.array(dubins_traj)
 
 	np.set_printoptions(precision=2)
@@ -253,13 +340,16 @@ if __name__ == '__main__':
 	if filter_choice == 'cv':
 		kf = EKF_CV_MODEL(x_init = dubins_traj[0,:], dt=dt, P_init = np.eye(5) * 1.)
 	elif filter_choice == 'ca':
-		init = dubins_traj[0,:].tolist() # hacky
-		init.extend([0,0])
-		kf = EKF_CA_MODEL(x_init = np.array(init), dt=dt, P_init = np.eye(7) * 1.)
+		# init = dubins_traj[0,:].tolist() # hacky
+		# init.extend([0,0])
+		# kf = EKF_CA_MODEL(x_init = np.array(init), dt=dt, P_init = np.eye(7) * 1.)
+		raise NotImplemented("WIP.")
 	else:
 		raise ValueError("Invalid filter choice: ", filter_choice)
 
-	print(kf._identify_Q(dubins_traj))
+	Q_fit = EKF_CV_MODEL._identify_Q_sequence(dubins_traj) 
+	kf.Q = Q_fit
+	print(kf.Q)
 
 	for i in range(len(dubins_traj)):
 		kf.predict()
@@ -327,5 +417,4 @@ if __name__ == '__main__':
 	plt.fill_between(inds_pred, below, above, color='c', alpha=0.5)
 	plt.plot(inds_filt, dubins_traj[:,4], 'k')
 	plt.title("Angular Velocity")
-
 	plt.show()

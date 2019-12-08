@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.io as sio
+from utils import fix_angle
 
 # Function to get all possible goals, along with occupancy.
 # Each goal is an array [x,y,free].
@@ -185,16 +186,6 @@ def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_int
     else:
         return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp))
     
-
-# Common code (TODO: add to a utils.py)
-def fix_angle(diff_ang):
-    while diff_ang > np.pi:
-        diff_ang -= 2 * np.pi
-    while diff_ang < -np.pi:
-        diff_ang += 2 * np.pi
-    assert(-np.pi <= diff_ang and diff_ang <= np.pi)
-    return diff_ang
-
 def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind, end_ind, goal_ind, goals,\
                                            Nhist=5, Npred=20, Nskip=5, dt=0.1, ego_frame=False):
     features = []; labels = []; goal_snpts = []
