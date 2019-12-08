@@ -23,10 +23,11 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
 
+import glob
 from datetime import datetime
 
 class CombinedLSTM(object):
-	def __init__(history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta):
+	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -34,7 +35,7 @@ class CombinedLSTM(object):
 		future_horizon      = future_shape[1]
 		future_dim	        = future_shape[2]
 
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, hidden_dim=hidden_dim, beta=beta)
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
 	def fit(train_set, val_set):
@@ -54,10 +55,10 @@ class CombinedLSTM(object):
 
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
-	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, hidden_dim=100, beta=0.1):
+	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=100):
 		self.beta       = beta
-		self.model      = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
 		self.history    = None
+		self.model  = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
 
 		''' Debug '''
 		#plot_model(self.model, to_file='goal_model.png')
@@ -142,6 +143,12 @@ class GoalLSTM(object):
 		self.model.save(file_name)
 		print("Saved goal model to disk")
 
+	def load(self):
+		model_files_on_disk = glob.glob('./model/goal_model_*.h5')
+		print('Goal Model files on disk: %s' % model_files_on_disk)
+		goal_model = load_model(model_files_on_disk[-1])
+		return goal_model
+
 	def predict(self, test_set):
 		goal_pred = self.model.predict([test_set['history_traj_data'], test_set['goal_position']])
 		return goal_pred
@@ -149,9 +156,9 @@ class GoalLSTM(object):
 class TrajLSTM(object):
 	"""docstring for TrajLSTM"""
 	def __init__(self, traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=100):
-		self.model = self._create_model(traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim)
 		self.history    = None
 
+		self.model = self._create_model(traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim)
 		''' Debug '''
 		# plot_model(self.model,to_file='traj_model.png')
 		# print(self.model.summary())
@@ -230,6 +237,12 @@ class TrajLSTM(object):
 		file_name = "traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
 		self.model.save(file_name)
 		print("Saved traj model to disk")
+
+	def load(self):
+		model_files_on_disk = glob.glob('./model/traj_model_*.h5')
+		print('Traj Model files on disk: %s' % model_files_on_disk)
+		traj_model = load_model(model_files_on_disk[-1])
+		return traj_model
 
 	def predict(self, test_set):
 		# TODO: how to incorporate goal prediction
