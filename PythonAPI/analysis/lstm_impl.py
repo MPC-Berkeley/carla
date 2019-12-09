@@ -161,8 +161,8 @@ class GoalLSTM(object):
 		# dt_string = now.strftime('%m_%d_%H_%M')
 		# file_name = "./model/goal_model_%.4f_%s.h5" % (self.history.history['val__top_k_acc'][-1], dt_string)
 		self.model.save(file_name)
-		# print("Saved goal model to disk")
-
+		print('Saved model %s' % file_name)
+		
 	def load(self, file_name):
 		# model_files_on_disk = glob.glob('./model/goal_model_*.h5')
 		# model_files_on_disk.sort()
@@ -268,7 +268,7 @@ class TrajLSTM(object):
 		# dt_string = now.strftime('%m_%d_%H_%M')
 		# file_name = "./model/traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
 		self.model.save(file_name)
-		# print("Saved traj model to disk")
+		print('Saved model %s' % file_name)
 
 	def load(self, file_name):
 		# model_files_on_disk = glob.glob('./model/traj_model_*.h5')
