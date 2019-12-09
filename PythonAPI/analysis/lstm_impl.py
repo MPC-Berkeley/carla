@@ -168,7 +168,7 @@ class GoalLSTM(object):
 		# model_files_on_disk.sort()
 		# print('Goal Model files on disk: %s' % model_files_on_disk)
 		# goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
-		self.model = load_model(file_name, custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
+		self.model = load_model(file_name, custom_objects={'max_ent_loss': self.max_ent_loss, 'top_k_acc': self.top_k_acc})
 		print('Loaded model from %s' % file_name) 
 		# return goal_model
 
