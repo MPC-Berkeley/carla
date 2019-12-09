@@ -22,7 +22,6 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-
 import glob
 from datetime import datetime
 
@@ -38,16 +37,16 @@ class CombinedLSTM(object):
 		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
-	def fit(train_set, val_set):
+	def fit(self, train_set, val_set):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100)
 		self.traj_model.fit_model(train_set, val_set, num_epochs=100)
 
-	def predict(test_set):
+	def predict(self, test_set):
 		goal_pred = self.goal_model.predict(test_set)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
-		traj_pred = self.traj_pred.predict(test_set)
+		traj_pred = self.traj_model.predict(test_set)
 		return goal_pred, traj_pred
 
 	def save(self):
@@ -64,13 +63,13 @@ class GoalLSTM(object):
 		#plot_model(self.model, to_file='goal_model.png')
 		#print(self.model.summary())
 
-	def _max_ent_loss(self, y_true, y_pred):
+	def max_ent_loss(self, y_true, y_pred):
 		loss1 = K.categorical_crossentropy(y_true, y_pred)
 		loss2 = K.categorical_crossentropy(y_pred, y_pred)
 		loss  = loss1 + self.beta * loss2
 		return loss
 
-	def _top_k_acc(self, y_true, y_pred, k=3):
+	def top_k_acc(self, y_true, y_pred, k=3):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
 	def _create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
@@ -93,25 +92,34 @@ class GoalLSTM(object):
 
 		# Final FC layer with a softmax activation
 		goal_output = Dense(n_outputs,activation="softmax",name="goal_output")(concat_output)
-		    
+			
 		# Create final model
 		model = Model([lstm_input,goals_input], goal_output)
 
 		# Compile model using loss
 		#     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-		model.compile(loss=self._max_ent_loss, optimizer='adam', metrics=[self._top_k_acc])
+		model.compile(loss=self.max_ent_loss, optimizer='adam', metrics=[self.top_k_acc])
+
+		self.init_weights = model.get_weights()
 
 		return model
 
-	def fit_model(self, train_set, val_set, num_epochs=100):
-		val_data = ([val_set['history_traj_data'], val_set['goal_position']], \
+	def _reset(self): 
+		self.model.set_weights(self.init_weights)
+
+	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0):
+		val_data = ([val_set['history_traj_data'][:,:,:3], val_set['goal_position']], 
 					 val_set['one_hot_goal'])
 
-		self.history = self.model.fit(\
-					[train_set['history_traj_data'], train_set['goal_position']], \
-					train_set['one_hot_goal'], \
+		self._reset()
+		self.history = self.model.fit(
+					[train_set['history_traj_data'][:,:,:3], train_set['goal_position']], 
+					train_set['one_hot_goal'], 
 					epochs=num_epochs, 
-					validation_data=val_data)
+					validation_data=val_data,
+					verbose=verbose)
+		if verbose:
+			self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
@@ -150,7 +158,7 @@ class GoalLSTM(object):
 		return goal_model
 
 	def predict(self, test_set):
-		goal_pred = self.model.predict([test_set['history_traj_data'], test_set['goal_position']])
+		goal_pred = self.model.predict([test_set['history_traj_data'][:,:,:3], test_set['goal_position']])
 		return goal_pred
 
 class TrajLSTM(object):
@@ -196,24 +204,33 @@ class TrajLSTM(object):
 		# Compile model using loss
 		model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
 
+		self.init_weights = model.get_weights()
+
 		return model
 
-	def fit_model(self, train_set, val_set, num_epochs=100):
-		val_data = ([val_set['history_traj_data'], val_set['one_hot_goal']], \
-					 val_set['future_traj_data'])
+	def _reset(self): 
+		self.model.set_weights(self.init_weights)
+
+	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0):
+		val_data = ([val_set['history_traj_data'][:,:,:3], val_set['one_hot_goal']], 
+					 val_set['future_traj_data'][:,:,:2])
 		
-		self.history = self.model.fit(\
-					[train_set['history_traj_data'], train_set['one_hot_goal']], \
-					train_set['future_traj_data'], \
+		self._reset()
+		self.history = self.model.fit(
+					[train_set['history_traj_data'][:,:,:3], train_set['one_hot_goal']], 
+					train_set['future_traj_data'][:,:,:2], 
 					epochs=num_epochs, 
-					validation_data=val_data)
+					validation_data=val_data, 
+					verbose = verbose)
+		if verbose:
+			self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
 			raise AttributeError("No history available.  Run fit_model.")
 
-		plt.plot(self.history.history['acc'])
-		plt.plot(self.history.history['val_acc'])
+		plt.plot(self.history.history['accuracy'])
+		plt.plot(self.history.history['val_accuracy'])
 		plt.title('model accuracy')
 		plt.ylabel('accuracy')
 		plt.xlabel('epoch')
@@ -246,5 +263,5 @@ class TrajLSTM(object):
 
 	def predict(self, test_set):
 		# TODO: how to incorporate goal prediction
-		traj_pred = self.model.predict([test_set['history_traj_data'], test_set['one_hot_goal']])
+		traj_pred = self.model.predict([test_set['history_traj_data'][:,:,:3], test_set['one_hot_goal']])
 		return traj_pred

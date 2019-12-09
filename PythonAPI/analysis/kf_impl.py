@@ -50,23 +50,25 @@ class EKF_CV_MODEL(object):
 						   [0,0,1,0,0]])
 		self.dt = dt
 
-	def save(self):
+	def save(self, filename):
 		kf_dict = {}
 		kf_dict['Q'] =  self.Q
 		kf_dict['R'] =  self.R
 		kf_dict['dt'] = self.dt
+		pickle.dump(kf_dict, open(filename, 'wb'))
 
-		now = datetime.now()
-		dt_string = now.strftime('%m_%d_%H_%M')
-		fname = "kf_%s.pkl" % dt_string
-		pickle.dump(kf_dict, open(fname, 'wb'))
+	def load(self, filename):
+		kf_dict = pickle.load(open(filename, 'rb'))
+		self.Q  = kf_dict['Q']
+		self.R  = kf_dict['R']
+		self.dt = kf_dict['dt']
 
 	def fit(self, train_set, val_set):
 		self.Q = EKF_CV_MODEL._identify_Q_train(train_set, self.dt)
 
 		''' Debug '''
-		np.set_printoptions(precision=2)
-		print('Q identified as: ', self.Q)
+		#np.set_printoptions(precision=2)
+		#print('Q identified as: ', self.Q)
 
 	def predict(self, test_set):
 		# sort of inverted version compared to LSTM method
