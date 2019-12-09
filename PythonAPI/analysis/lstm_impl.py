@@ -49,8 +49,20 @@ class CombinedLSTM(object):
 		traj_pred = self.traj_model.predict(test_set)
 		return goal_pred, traj_pred
 
-	def save(self):
-		raise NotImplementedError("XS: TODO")
+	def save(self, filename):
+		try:
+			self.goal_model.save_model('%s_goal.h5' % filename)
+			self.traj_model.save_model('%s_traj.h5' % filename)
+		except Exception as e:
+			print(e)
+
+	def load(self, filename):
+		try:
+			self.goal_model.load('%s_goal.h5' % filename)
+			self.traj_model.load('%s_traj.h5' % filename)
+		except Exception as e:
+			print(e)
+
 
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
@@ -141,22 +153,24 @@ class GoalLSTM(object):
 		plt.legend(['train', 'validation'], loc='upper right')
 		plt.show()
 
-	def save_model(self):
+	def save_model(self, file_name):
 		if not self.history:
 			raise AttributeError("No history available.  Run fit_model.")
 
-		now = datetime.now()
-		dt_string = now.strftime('%m_%d_%H_%M')
-		file_name = "./model/goal_model_%.4f_%s.h5" % (self.history.history['val__top_k_acc'][-1], dt_string)
+		# now = datetime.now()
+		# dt_string = now.strftime('%m_%d_%H_%M')
+		# file_name = "./model/goal_model_%.4f_%s.h5" % (self.history.history['val__top_k_acc'][-1], dt_string)
 		self.model.save(file_name)
-		print("Saved goal model to disk")
+		# print("Saved goal model to disk")
 
-	def load(self):
-		model_files_on_disk = glob.glob('./model/goal_model_*.h5')
-		model_files_on_disk.sort()
-		print('Goal Model files on disk: %s' % model_files_on_disk)
-		goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
-		return goal_model
+	def load(self, file_name):
+		# model_files_on_disk = glob.glob('./model/goal_model_*.h5')
+		# model_files_on_disk.sort()
+		# print('Goal Model files on disk: %s' % model_files_on_disk)
+		# goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
+		self.model = load_model(file_name, custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
+		print('Loaded model from %s' % file_name) 
+		# return goal_model
 
 	def predict(self, test_set):
 		goal_pred = self.model.predict([test_set['history_traj_data'][:,:,:3], test_set['goal_position']])
@@ -246,22 +260,24 @@ class TrajLSTM(object):
 		plt.legend(['train', 'validation'], loc='upper right')
 		plt.show()
 
-	def save_model(self):
+	def save_model(self, file_name):
 		if not self.history:
 			raise AttributeError("No history available.  Run fit_model.")
 
-		now = datetime.now()
-		dt_string = now.strftime('%m_%d_%H_%M')
-		file_name = "./model/traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
+		# now = datetime.now()
+		# dt_string = now.strftime('%m_%d_%H_%M')
+		# file_name = "./model/traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
 		self.model.save(file_name)
-		print("Saved traj model to disk")
+		# print("Saved traj model to disk")
 
-	def load(self):
-		model_files_on_disk = glob.glob('./model/traj_model_*.h5')
-		model_files_on_disk.sort()
-		print('Traj Model files on disk: %s' % model_files_on_disk)
-		traj_model = load_model(model_files_on_disk[0])
-		return traj_model
+	def load(self, file_name):
+		# model_files_on_disk = glob.glob('./model/traj_model_*.h5')
+		# model_files_on_disk.sort()
+		# print('Traj Model files on disk: %s' % model_files_on_disk)
+		# traj_model = load_model(model_files_on_disk[0])
+		self.model = load_model(file_name)
+		print('Loaded model from %s' % file_name)
+		#return traj_model
 
 	def predict(self, test_set):
 		# TODO: how to incorporate goal prediction

@@ -55,6 +55,7 @@ class EKF_CV_MODEL(object):
 		kf_dict['Q'] =  self.Q
 		kf_dict['R'] =  self.R
 		kf_dict['dt'] = self.dt
+		filename += '.pkl'
 		pickle.dump(kf_dict, open(filename, 'wb'))
 
 	def load(self, filename):
