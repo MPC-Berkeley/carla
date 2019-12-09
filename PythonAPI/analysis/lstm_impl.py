@@ -147,14 +147,15 @@ class GoalLSTM(object):
 
 		now = datetime.now()
 		dt_string = now.strftime('%m_%d_%H_%M')
-		file_name = "goal_model_%.4f_%s.h5" % (self.goal_history.history['val_top_k_acc'][-1], dt_string)
+		file_name = "./model/goal_model_%.4f_%s.h5" % (self.history.history['val__top_k_acc'][-1], dt_string)
 		self.model.save(file_name)
 		print("Saved goal model to disk")
 
 	def load(self):
 		model_files_on_disk = glob.glob('./model/goal_model_*.h5')
+		model_files_on_disk.sort()
 		print('Goal Model files on disk: %s' % model_files_on_disk)
-		goal_model = load_model(model_files_on_disk[-1])
+		goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
 		return goal_model
 
 	def predict(self, test_set):
@@ -251,14 +252,15 @@ class TrajLSTM(object):
 
 		now = datetime.now()
 		dt_string = now.strftime('%m_%d_%H_%M')
-		file_name = "traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
+		file_name = "./model/traj_model_%.4f_%s.h5" % (self.history.history['val_acc'][-1], dt_string)
 		self.model.save(file_name)
 		print("Saved traj model to disk")
 
 	def load(self):
 		model_files_on_disk = glob.glob('./model/traj_model_*.h5')
+		model_files_on_disk.sort()
 		print('Traj Model files on disk: %s' % model_files_on_disk)
-		traj_model = load_model(model_files_on_disk[-1])
+		traj_model = load_model(model_files_on_disk[0])
 		return traj_model
 
 	def predict(self, test_set):
