@@ -22,6 +22,7 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
+import tensorflow as tf
 import glob
 from datetime import datetime
 
@@ -37,9 +38,9 @@ class CombinedLSTM(object):
 		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
-	def fit(self, train_set, val_set):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=100)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=100)
+	def fit(self, train_set, val_set, verbose=0):
+		self.goal_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
 
 	def predict(self, test_set):
 		goal_pred = self.goal_model.predict(test_set)
@@ -78,7 +79,11 @@ class GoalLSTM(object):
 	def max_ent_loss(self, y_true, y_pred):
 		loss1 = K.categorical_crossentropy(y_true, y_pred)
 		loss2 = K.categorical_crossentropy(y_pred, y_pred)
-		loss  = loss1 + self.beta * loss2
+		#entropy = -tf.math.reduce_sum(tf.math.multiply_no_nan(tf.math.log(y_pred), y_pred), axis = 1)
+
+		# loss  = loss1 - self.beta * entropy
+		loss = loss1 - self.beta * loss2
+		# loss = -loss2
 		return loss
 
 	def top_k_acc(self, y_true, y_pred, k=3):
