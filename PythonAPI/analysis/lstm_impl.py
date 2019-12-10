@@ -42,12 +42,30 @@ class CombinedLSTM(object):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
 		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
 
-	def predict(self, test_set):
+	def predict(self, test_set, goal_input_type='gt'):
 		goal_pred = self.goal_model.predict(test_set)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
+
+		# If using the predicted goal
+		if goal_input_type == 'pred':
+			# Get the argmax goal
+			max_idx = np.argmax(goal_pred, axis=1)
+			# Set others to be zeros while keep the argmax to be 1.
+			test_set['one_hot_goal'] = np.zeros_like(test_set['one_hot_goal'])
+			for row, col in enumerate(max_idx):
+				test_set['one_hot_goal'][row, col] = 1.
+		# If using the none goal
+		elif goal_input_type == 'none':
+			# Set others to be zeros while keep the argmax to be 1.
+			test_set['one_hot_goal'] = np.zeros_like(test_set['one_hot_goal'])
+		# If using the ground truth goal
+		elif goal_input_type == 'gt':
+			pass
+
 		traj_pred = self.traj_model.predict(test_set)
+
 		return goal_pred, traj_pred
 
 	def save(self, filename):
