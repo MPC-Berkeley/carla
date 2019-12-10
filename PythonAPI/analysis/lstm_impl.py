@@ -22,7 +22,7 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-import tensorflow as tf
+# import tensorflow as tf
 import glob
 from datetime import datetime
 
@@ -108,7 +108,7 @@ class GoalLSTM(object):
 		def loss(y_true, y_pred):
 			loss1 = K.categorical_crossentropy(y_true, y_pred)
 			loss2 = K.categorical_crossentropy(y_pred, y_pred)
-			loss3 = K.sum(  K.relu( y_pred[:,:32] - K.reshape(occupancy, (tf.shape(occupancy)[0], 32, 3))[:,:,2] ), axis = 1  ) 
+			loss3 = K.sum(  K.relu( y_pred[:,:32] - K.reshape(occupancy, (K.shape(occupancy)[0], 32, 3))[:,:,2] ), axis = 1  ) 
 
 			return loss1 - beta * loss2 + gamma * loss3
 
