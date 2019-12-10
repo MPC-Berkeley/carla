@@ -27,7 +27,7 @@ import glob
 from datetime import datetime
 
 class CombinedLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1):
+	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -38,9 +38,11 @@ class CombinedLSTM(object):
 		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
+		self.use_goal_info = use_goal_info
+
 	def fit(self, train_set, val_set, verbose=0):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose, use_goal_info=self.use_goal_info)
 
 	def predict(self, test_set, top_k_goal=[]):
 		goal_pred = self.goal_model.predict(test_set)
@@ -51,7 +53,7 @@ class CombinedLSTM(object):
 		traj_test_set = test_set.copy()
 
 		# If don't want the goal
-		if top_k_goal == None:
+		if top_k_goal == None or self.use_goal_info == False:
 			# Set others to be zeros while keep the argmax to be 1.
 			traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
 			traj_pred = self.traj_model.predict(traj_test_set)
@@ -270,13 +272,20 @@ class TrajLSTM(object):
 	def _reset(self): 
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0):
-		val_data = ([val_set['history_traj_data'][:,:,:3], val_set['one_hot_goal']], 
-					 val_set['future_traj_data'][:,:,:2])
-		
+	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0, use_goal_info=True):
+		if use_goal_info:
+			val_goal = val_set['one_hot_goal']
+			train_goal = train_set['one_hot_goal']
+		else:
+			val_goal = np.zeros_like(val_set['one_hot_goal'])
+			train_goal = np.zeros_like(train_set['one_hot_goal'])
+
+		val_data   = ([val_set['history_traj_data'][:,:,:3], val_goal], 
+					  val_set['future_traj_data'][:,:,:2])
+
 		self._reset()
 		self.history = self.model.fit(
-					[train_set['history_traj_data'][:,:,:3], train_set['one_hot_goal']], 
+					[train_set['history_traj_data'][:,:,:3], train_goal], 
 					train_set['future_traj_data'][:,:,:2], 
 					epochs=num_epochs, 
 					validation_data=val_data, 
