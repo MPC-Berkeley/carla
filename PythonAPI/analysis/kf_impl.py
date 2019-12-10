@@ -76,8 +76,11 @@ class EKF_CV_MODEL(object):
 		N_pred = test_set['future_traj_data'][0].shape[0]
 		traj_pred = self.traj_prediction(test_set['history_traj_data'], N_pred) # TODO
 		goal_pred = self.goal_prediction(traj_pred, test_set['goal_position']) # TODO
+
+		traj_pred_dict = {0: traj_pred}
+		traj_pred_dict[0] = traj_pred
 		# TODO: clean up and fix analysis
-		return goal_pred, traj_pred
+		return goal_pred, traj_pred_dict
 
 	def time_update(self):
 		self.x = EKF_CV_MODEL._f_cv(self.x, self.dt)

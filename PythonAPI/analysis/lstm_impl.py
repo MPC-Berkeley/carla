@@ -42,31 +42,37 @@ class CombinedLSTM(object):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
 		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
 
-	def predict(self, test_set, goal_input_type='gt'):
+	def predict(self, test_set, top_k_goal=[]):
 		goal_pred = self.goal_model.predict(test_set)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
+		traj_pred_dict = dict()
+		traj_test_set = test_set.copy()
 
-		# If using the predicted goal
-		if goal_input_type == 'pred':
-			# Get the argmax goal
-			max_idx = np.argmax(goal_pred, axis=1)
+		# If don't want the goal
+		if top_k_goal == None:
 			# Set others to be zeros while keep the argmax to be 1.
-			test_set['one_hot_goal'] = np.zeros_like(test_set['one_hot_goal'])
-			for row, col in enumerate(max_idx):
-				test_set['one_hot_goal'][row, col] = 1.
-		# If using the none goal
-		elif goal_input_type == 'none':
-			# Set others to be zeros while keep the argmax to be 1.
-			test_set['one_hot_goal'] = np.zeros_like(test_set['one_hot_goal'])
+			traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
+			traj_pred = self.traj_model.predict(traj_test_set)
+			traj_pred_dict[0] = traj_pred
 		# If using the ground truth goal
-		elif goal_input_type == 'gt':
-			pass
+		elif top_k_goal == []:
+			traj_pred = self.traj_model.predict(traj_test_set)
+			traj_pred_dict[0] = traj_pred
+		else:
+			top_idxs = np.argsort(goal_pred, axis=1)
+			for k in top_k_goal:
+				kth_idx = top_idxs[:, -1-k]
+				# Set others to be zeros while keep the argmax to be 1.
+				traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
+				for row, col in enumerate(kth_idx):
+					traj_test_set['one_hot_goal'][row, col] = 1.
 
-		traj_pred = self.traj_model.predict(test_set)
+				traj_pred = self.traj_model.predict(traj_test_set)
+				traj_pred_dict[k] = traj_pred
 
-		return goal_pred, traj_pred
+		return goal_pred, traj_pred_dict
 
 	def save(self, filename):
 		try:
