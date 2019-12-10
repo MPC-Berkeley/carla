@@ -27,7 +27,7 @@ import glob
 from datetime import datetime
 
 class CombinedLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1):
+	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -35,7 +35,7 @@ class CombinedLSTM(object):
 		future_horizon      = future_shape[1]
 		future_dim	        = future_shape[2]
 
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=hidden_dim)
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
 	def fit(self, train_set, val_set, verbose=0):
@@ -91,14 +91,28 @@ class CombinedLSTM(object):
 
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
-	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=100):
+	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=100):
 		self.beta       = beta
+		self.gamma      = gamma
 		self.history    = None
 		self.model  = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
 
 		''' Debug '''
 		#plot_model(self.model, to_file='goal_model.png')
 		#print(self.model.summary())
+
+	def goal_loss(self, occupancy):
+		beta = self.beta
+		gamma = self.gamma
+
+		def loss(y_true, y_pred):
+			loss1 = K.categorical_crossentropy(y_true, y_pred)
+			loss2 = K.categorical_crossentropy(y_pred, y_pred)
+			loss3 = K.sum(  K.relu( y_pred[:,:32] - K.reshape(occupancy, (tf.shape(occupancy)[0], 32, 3))[:,:,2] ), axis = 1  ) 
+
+			return loss1 - beta * loss2 + gamma * loss3
+
+		return loss 
 
 	def max_ent_loss(self, y_true, y_pred):
 		loss1 = K.categorical_crossentropy(y_true, y_pred)
@@ -127,7 +141,7 @@ class GoalLSTM(object):
 		goals_input = Input(shape=(goal_input_shape),name="goal_input")
 
 		# Merge inputs with LSTM features
-		concat_input = concatenate([goals_input,lstm_outputs],name="stacked_input")
+		concat_input = concatenate([goals_input, lstm_outputs],name="stacked_input")
 
 		concat_output = Dense(100, activation="relu", name="concat_relu")(concat_input)
 
@@ -135,11 +149,11 @@ class GoalLSTM(object):
 		goal_output = Dense(n_outputs,activation="softmax",name="goal_output")(concat_output)
 			
 		# Create final model
-		model = Model([lstm_input,goals_input], goal_output)
+		model = Model([lstm_input, goals_input], goal_output)
 
 		# Compile model using loss
 		#     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-		model.compile(loss=self.max_ent_loss, optimizer='adam', metrics=[self.top_k_acc])
+		model.compile(loss=self.goal_loss(goals_input), optimizer='adam', metrics=[self.top_k_acc])
 
 		self.init_weights = model.get_weights()
 
@@ -197,7 +211,8 @@ class GoalLSTM(object):
 		# model_files_on_disk.sort()
 		# print('Goal Model files on disk: %s' % model_files_on_disk)
 		# goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
-		self.model = load_model(file_name, custom_objects={'max_ent_loss': self.max_ent_loss, 'top_k_acc': self.top_k_acc})
+		#self.model = load_model(file_name, custom_objects={'max_ent_loss': self.max_ent_loss, 'top_k_acc': self.top_k_acc})
+		self.model = load_model(file_name, custom_objects={'goal_loss': self.goal_loss, 'top_k_acc': self.top_k_acc})
 		print('Loaded model from %s' % file_name) 
 		# return goal_model
 
