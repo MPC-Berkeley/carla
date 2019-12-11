@@ -78,15 +78,15 @@ class CombinedLSTM(object):
 
 	def save(self, filename):
 		try:
-			self.goal_model.save_model('%s_goal.h5' % filename)
-			self.traj_model.save_model('%s_traj.h5' % filename)
+			self.goal_model.model.save_weights('%s_goalw.h5' % filename)
+			self.traj_model.model.save_weights('%s_trajw.h5' % filename)
 		except Exception as e:
 			print(e)
 
 	def load(self, filename):
 		try:
-			self.goal_model.load('%s_goal.h5' % filename)
-			self.traj_model.load('%s_traj.h5' % filename)
+			self.goal_model.model.load_weights('%s_goalw.h5' % filename)
+			self.traj_model.model.load_weights('%s_trajw.h5' % filename)
 		except Exception as e:
 			print(e)
 
