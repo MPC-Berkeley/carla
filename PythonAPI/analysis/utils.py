@@ -26,7 +26,7 @@ def extract_data(pklfile, full_traj=False, crop_traj=False):
     if crop_traj:
         future_traj_data = np.array(dataset_all['labels'])[:, :, :2]
     else:
-        future_traj_data = np.array(dataset_all['labels'])
+        future_traj_data = np.array(dataset_all['labels'])[:,:,:5]
 
     # All the goal positins and occupancy (x, y, occup), with shape (batch_size, (goal_nums * feature_dims))
     goals_position = np.array(dataset_all['goals'])
@@ -106,7 +106,8 @@ def sup_plot(model_name, plot_set, traj_idx, goal_pred, traj_pred_dict, limit=No
             else:
                 plt.plot(plot_goals_coords_rot[gt_idx][0], plot_goals_coords_rot[gt_idx][1], 'o', fillstyle='bottom', color = '#1f77b4', markersize = 9)
 
-            for top_k in traj_pred_dict.keys():
+            num_goals_to_show = len(traj_pred_dict.keys()) if 'LSTM' in model_name else 3
+            for top_k in range(num_goals_to_show):
                 j = np.argsort(goal_pred[t])[-1-top_k]
                 prob = probs[-1-top_k]
             # for j in best_k_idx:
