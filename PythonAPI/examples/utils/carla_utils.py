@@ -205,8 +205,8 @@ class World(object):
     def tick(self, clock):
         self.hud.tick(self, clock)
 
-    def render(self, display):
-        self.camera_manager.render(display)
+    def render(self, display, intent_flag=False):
+        self.camera_manager.render(display, intent_flag=intent_flag)
         self.hud.render(display)
 
     def destroy(self):
@@ -1005,7 +1005,7 @@ class CameraManager(object):
         self.recording = not self.recording
         self.hud.notification('Recording %s' % ('On' if self.recording else 'Off'))
 
-    def render(self, display):
+    def render(self, display, intent_flag=False):
         if self.surface is not None:
             display.blit(self.surface, (0, 0))
             
@@ -1028,7 +1028,18 @@ class CameraManager(object):
             textSurface = font.render(toShow, True, (255,255,255))
             px = 0.465 * self.hud.dim[0]
             py = 0.65 * self.hud.dim[1]
-            display.blit(textSurface,(px,py))
+            display.blit(textSurface,(px,py-50))
+
+            if intent_flag:
+                toShow_intent = "Intent"
+
+                textIntent = font.render(toShow_intent, True, (0,153,0))
+            else:
+                toShow_intent = "Intent"
+
+                textIntent = font.render(toShow_intent, True, (204,0,0))
+
+            display.blit(textIntent,(px-20,py+100))
             # Location(x=0.100000, y=-0.300000, z=1.350000)
     @staticmethod
     def _parse_image(weak_self, image):

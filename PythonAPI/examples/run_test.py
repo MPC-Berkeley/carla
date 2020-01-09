@@ -160,6 +160,8 @@ def game_loop(args):
             spwnr = VehicleSpawner(client,False,[0,1,2,3],[0,4,4,0])
             clock = pygame.time.Clock()
 
+            intent_flag = False
+
             while True:
                 clock.tick_busy_loop(60)
 
@@ -177,10 +179,12 @@ def game_loop(args):
                     # publish intention
                     pub_str = "Intention Determined"
                     intention_pub.publish(pub_str)
+                    intent_flag = True
 
                 world.tick(clock)
-                world.render(display)
+                world.render(display, intent_flag=intent_flag)
                 pygame.display.flip()
+
             
             # Stop the rosbag recording
             if rosbag_proc:
