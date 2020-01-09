@@ -1,6 +1,9 @@
 import numpy as np
 import scipy.io as sio
 from utils import fix_angle
+import pdb
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 # Function to get all possible goals, along with occupancy.
 # Each goal is an array [x,y,free].
@@ -178,6 +181,8 @@ def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_int
     
     if include_intent:
         if np.max(t_interp) >= ego_trajectory[switch_ind,0]:
+            # if any portion of the snippet has goal determined,
+            # treat the entire snippet as if the goal is known.
             intent = ego_trajectory[switch_ind, 6] * np.ones(x_interp.shape)
         else:
             intent = -1 * np.ones(x_interp.shape)
@@ -227,3 +232,54 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
                 goal_snpts[id_snpt][id_g, :2] = R @ (goal_snpts[id_snpt][id_g, :2] - curr_position)
 
     return features, labels, goal_snpts
+
+def generate_scene_image(features, parking_lot, ego_dims, static_objs):
+    f_test = features[-1] # just look at the first snippet
+   
+    for ego_pose in f_test:
+        # todo: make this an image.  for now, just plot to simplify
+        f = plt.figure()
+        ax = f.gca()
+
+        # Plot the parking lot in red.
+        for line in parking_lot:
+            x, y, l, w, th = line
+            assert abs(th) < 0.01, "Parking line has non-zero heading!  Not handled."
+
+            bottom_left_corner = (x - l/2., -y - w/2.)
+            r = Rectangle(bottom_left_corner, l, w, fc = 'r', ec = 'r')
+            ax.add_patch(r)
+            
+        # Plot the static objects in green.
+        for obj in static_objs:
+            x, y, l, w, th = obj
+            assert abs(th) < 0.01, "Parked vehicle has non-zero heading! Not handled."
+
+            bottom_left_corner = (x - l/2., y - w/2.)
+            r = Rectangle(bottom_left_corner, l, w, fc = 'b', ec = 'none')
+            ax.add_patch(r)
+
+        # Plot the ego vehicle.
+        ego_x  = ego_pose[0]
+        ego_y  = ego_pose[1]
+        ego_th = ego_pose[2]
+        ego_l  = ego_dims['length']
+        ego_w  = ego_dims['width']
+        rot_matrix = np.array([[np.cos(ego_th), -np.sin(ego_th)], \
+                               [np.sin(ego_th),  np.cos(ego_th)]])
+
+        # note this assumes the rotating axis has x_v aligned with vehicle
+        # longitudinal axis (fwd) and y_v aligned with vehicle lateral axis (left)
+        # so bottom_left_corner is the min x and max y corner in this coordinate system
+        # for theta = 0 (which is counterintuitive).
+        bottom_left = np.array([[ego_x], [ego_y]]) + \
+                             rot_matrix @ np.array([[-ego_l/2.], [0.]]) + \
+                             rot_matrix @ np.array([[0.], [ego_w/2.]])
+        
+        r = Rectangle(bottom_left, ego_l, -ego_w, angle=np.degrees(ego_th), fc = 'g')
+        ax.add_patch(r)
+
+        plt.xlim(275, 295)
+        plt.ylim(180, 240)
+        plt.axis('equal')
+        plt.show()

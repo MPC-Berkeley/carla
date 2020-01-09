@@ -14,27 +14,27 @@ def extract_parking_lines():
 
   lines = []
   # Length and width for the long lines
-  dX, dY = 0.185915, 51.3499985
+  dX, dY = round(0.185915, 3), round(51.3499985, 3)
 
   # Top big line
-  xTop, yTop = 29365.3296875 / 100, -20952.0 / 100
+  xTop, yTop = round(29365.3296875 / 100, 3), round(-20952.0 / 100, 3)
   lines.append([xTop, yTop, dX, dY, 0])
 
   # Bottom big line
-  xBot, yBot  = 27615.4296875 / 100, -20952.0 / 100
+  xBot, yBot  = round(27615.4296875 / 100, 3), round(-20952.0 / 100, 3)
   lines.append([xBot,yBot,dX, dY, 0])
 
   # Length and width for the short lines
-  dx, dy = 5, 0.170981
+  dx, dy = 5., round(0.170981, 3)
 
   # Left-most top short line
-  xt, yt = 29111.3886719 / 100, -23510.8730469 / 100
-  for k in range(16):
+  xt, yt = round(29111.3886719 / 100, 3), round(-23510.8730469 / 100, 3)
+  for k in range(17):
     lines.append([xt,yt+k*3.2,dx,dy,0])
 
   # Left-most bottom short line
-  xb, yb = 27871.3886719 / 100, -23510.8730469 / 100
-  for k in range(16):
+  xb, yb = round(27871.3886719 / 100, 3), round(-23510.8730469 / 100, 3)
+  for k in range(17):
     lines.append([xb,yb+k*3.2,dx,dy,0])
 
   return lines
@@ -267,7 +267,7 @@ def process_bag(bag):
                 ego_ind = ind
                 break
 
-        assert(ego_ind >= 0, "Ego vehicle not found in object list!")
+        assert ego_ind >= 0, "Ego vehicle not found in object list!"
 
         res_dict['ego_dimensions']['length'] = msg.objects[ego_ind].shape.dimensions[0]
         res_dict['ego_dimensions']['width']  = msg.objects[ego_ind].shape.dimensions[1]
@@ -282,10 +282,11 @@ def process_bag(bag):
             # Hack to find when the cars stop falling after being spawned.
             static_object_ind = ind
             break
-    assert(static_object_ind >= 0, "Could not find when the vehicles stop moving!")
+    assert static_object_ind >= 0, "Could not find when the vehicles stop moving!"
     for obj in res_dict['vehicle_object_lists'][static_object_ind]:
         x, y, z = obj['position']
-        theta = obj['orientation'][0] # TODO, confirm this again.
+        theta = round(obj['orientation'][0], 2) # TODO, confirm this again.
+        assert theta==0., "Parked vehicle has non-zero heading!"
         dx, dy, dz    = obj['dimensions']
         obj_entry = [x, y, dx, dy, theta]
         res_dict['static_object_list'].append(obj_entry)
