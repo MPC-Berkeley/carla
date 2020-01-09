@@ -5,8 +5,13 @@ import numpy as np
 #from cv_bridge import CvBridge
 
 def extract_parking_lines():
+  # Returns hard-coded lane markings for the parking lot map.
+  # Top = horizontal line for the "top" row
+  # Bot = horizontal line for the "bottom" row
+  # remaining lines are the vertical lines separating parking spots
+  # Contains the lines in format: x, y, dx, dy, theta,
+  # where (x,y) is the line center, (dx,dy) is the thickness, and theta is the orientation
 
-  # Contains the lines in format: x, y, dx, dy, theta
   lines = []
   # Length and width for the long lines
   dX, dY = 0.185915, 51.3499985
@@ -229,7 +234,7 @@ def process_bag(bag):
 
     res_dict['vehicle_odometry_dict'] = vehicle_odometry_dict
 
-    # Other Vehicle Object List
+    # Other Vehicle Object List.
     vehicle_object_lists = []
     for topic, msg, t in b.read_messages('/carla/hero/objects'):
         veh_obj_list = []
@@ -252,10 +257,38 @@ def process_bag(bag):
         vehicle_object_lists.append(veh_obj_list)
     res_dict['vehicle_object_lists'] = vehicle_object_lists
 
-
+    ''' Items needed for rasterized image representation are below '''
     res_dict['parking_lot'] = extract_parking_lines()
+    res_dict['ego_dimensions'] = {}
+    for topic, msg, t in b.read_messages('/carla/objects'):
+        ego_ind = -1
+        for ind, obj in enumerate(msg.objects):
+            if obj.id == ego_info_dict['id']:
+                ego_ind = ind
+                break
 
+        assert(ego_ind >= 0, "Ego vehicle not found in object list!")
 
+        res_dict['ego_dimensions']['length'] = msg.objects[ego_ind].shape.dimensions[0]
+        res_dict['ego_dimensions']['width']  = msg.objects[ego_ind].shape.dimensions[1]
+        break
+
+    res_dict['static_object_list'] = []
+    # Contains the bounding boxes in format: x, y, dx, dy, theta,
+    # where (x,y) is the bb center, (dx,dy) is the bb thickness, and theta is the orientation
+    static_object_ind = -1 
+    for ind, obj_list in enumerate(res_dict['vehicle_object_lists']):
+        if abs(obj_list[0]['acceleration'][-1]) < 0.2:
+            # Hack to find when the cars stop falling after being spawned.
+            static_object_ind = ind
+            break
+    assert(static_object_ind >= 0, "Could not find when the vehicles stop moving!")
+    for obj in res_dict['vehicle_object_lists'][static_object_ind]:
+        x, y, z = obj['position']
+        theta = obj['orientation'][0] # TODO, confirm this again.
+        dx, dy, dz    = obj['dimensions']
+        obj_entry = [x, y, dx, dy, theta]
+        res_dict['static_object_list'].append(obj_entry)
 
     '''
     # View just the first image.  This can be done in Python2, issues with Python3 here.
@@ -269,5 +302,5 @@ def process_bag(bag):
             plt.imshow(cv_image)
             image_viewed = True
     '''
-    outlier_removal(res_dict)
+    outlier_removal(res_dict) # this is applied to ego odometry for now
     return res_dict
