@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.io as sio
-from utils import fix_angle
+from utils import fix_angle, generate_image
 import pdb
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -235,11 +235,27 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
 
 def generate_scene_image(features, parking_lot, ego_dims, static_objs):
     f_test = features[-1] # just look at the first snippet
+    
+    # Get center point (x,y) of the parking lot
+    x0 = np.mean([min(x[0] for x in lines),max(x[0] for x in parking_lot)])
+    y0 = np.mean([min(x[1] for x in lines),max(x[1] for x in parking_lot)])
+
+    # Parking dimensions we want to consider
+    parking_size = [20,65] # dX and dY
+    resolution = 0.1 # in metres
+    xy_center = [x0,y0] # parking lot center
    
     for ego_pose in f_test:
         # todo: make this an image.  for now, just plot to simplify
         f = plt.figure()
         ax = f.gca()
+        
+        # Parking lot image
+        parking_img = generate_image(parking_size,resolution,xy_center,parking_lot)
+        
+        # Static objects image
+        static_img = generate_image(parking_size,resolution,xy_center,static_objs)
+        
 
         # Plot the parking lot in red.
         for line in parking_lot:
