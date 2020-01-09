@@ -142,3 +142,28 @@ def sup_plot(model_name, plot_set, traj_idx, goal_pred, traj_pred_dict, limit=No
             print( model_name + ": Trajectory # %03d movie saved successfully." % num_traj)
         else:
             print( model_name + ": Meet problem saving Trajectory # %03d movie." % num_traj)
+            
+def generate_image(parking_size,resolution,xy_center,lines):
+    
+    # Total parking lot dimensions to consider
+    dX, dY = parking_size
+    
+    h, w = int(dY/resolution), int(dX/resolution)
+
+    # Lambda functions for transforming x,y into pixel space
+    xp = lambda x : int(np.round(w / dX * ( x - x0) + w / 2))
+    yp = lambda y : int(np.round(h / dY * ( y - y0) + h / 2 ))
+    
+    # Base image
+    img = np.zeros((h,w),np.uint8)
+    
+    # Loop over parking lines
+    for x_center,y_center,dx,dy,th in lines:
+        
+        # pixel width in x and y dimension
+        dxp,dyp = int(np.round(dx/resolution)),int(np.round(dy/resolution))
+        x1,y1 = int(np.round(xp(x_center)-dxp/2)),int(np.round(yp(y_center)-dyp/2))
+        x2,y2 = int(np.round(xp(x_center)+dxp/2)),int(np.round(yp(y_center)+dyp/2))
+        img[y1:y2,x1:x2,] = 1
+        
+    return img
