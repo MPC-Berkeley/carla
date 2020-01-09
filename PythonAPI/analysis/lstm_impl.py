@@ -22,12 +22,12 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-import tensorflow as tf
+# import tensorflow as tf
 import glob
 from datetime import datetime
 
 class CombinedLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1):
+	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -35,46 +35,86 @@ class CombinedLSTM(object):
 		future_horizon      = future_shape[1]
 		future_dim	        = future_shape[2]
 
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=hidden_dim)
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
+
+		self.use_goal_info = use_goal_info
 
 	def fit(self, train_set, val_set, verbose=0):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose, use_goal_info=self.use_goal_info)
 
-	def predict(self, test_set):
+	def predict(self, test_set, top_k_goal=[]):
 		goal_pred = self.goal_model.predict(test_set)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
-		traj_pred = self.traj_model.predict(test_set)
-		return goal_pred, traj_pred
+		traj_pred_dict = dict()
+		traj_test_set = test_set.copy()
+
+		# If don't want the goal
+		if top_k_goal == None or self.use_goal_info == False:
+			# Set others to be zeros while keep the argmax to be 1.
+			traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
+			traj_pred = self.traj_model.predict(traj_test_set)
+			traj_pred_dict[0] = traj_pred
+		# If using the ground truth goal
+		elif top_k_goal == []:
+			traj_pred = self.traj_model.predict(traj_test_set)
+			traj_pred_dict[0] = traj_pred
+		else:
+			top_idxs = np.argsort(goal_pred, axis=1)
+			for k in top_k_goal:
+				kth_idx = top_idxs[:, -1-k]
+				# Set others to be zeros while keep the argmax to be 1.
+				traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
+				for row, col in enumerate(kth_idx):
+					traj_test_set['one_hot_goal'][row, col] = 1.
+
+				traj_pred = self.traj_model.predict(traj_test_set)
+				traj_pred_dict[k] = traj_pred
+
+		return goal_pred, traj_pred_dict
 
 	def save(self, filename):
 		try:
-			self.goal_model.save_model('%s_goal.h5' % filename)
-			self.traj_model.save_model('%s_traj.h5' % filename)
+			self.goal_model.model.save_weights('%s_goalw.h5' % filename)
+			self.traj_model.model.save_weights('%s_trajw.h5' % filename)
 		except Exception as e:
 			print(e)
 
 	def load(self, filename):
 		try:
-			self.goal_model.load('%s_goal.h5' % filename)
-			self.traj_model.load('%s_traj.h5' % filename)
+			self.goal_model.model.load_weights('%s_goalw.h5' % filename)
+			self.traj_model.model.load_weights('%s_trajw.h5' % filename)
 		except Exception as e:
 			print(e)
 
 
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
-	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, hidden_dim=100):
+	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=100):
 		self.beta       = beta
+		self.gamma      = gamma
 		self.history    = None
 		self.model  = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
 
 		''' Debug '''
 		#plot_model(self.model, to_file='goal_model.png')
 		#print(self.model.summary())
+
+	def goal_loss(self, occupancy):
+		beta = self.beta
+		gamma = self.gamma
+
+		def loss(y_true, y_pred):
+			loss1 = K.categorical_crossentropy(y_true, y_pred)
+			loss2 = K.categorical_crossentropy(y_pred, y_pred)
+			loss3 = K.sum(  K.relu( y_pred[:,:32] - K.reshape(occupancy, (K.shape(occupancy)[0], 32, 3))[:,:,2] ), axis = 1  ) 
+
+			return loss1 - beta * loss2 + gamma * loss3
+
+		return loss 
 
 	def max_ent_loss(self, y_true, y_pred):
 		loss1 = K.categorical_crossentropy(y_true, y_pred)
@@ -103,7 +143,7 @@ class GoalLSTM(object):
 		goals_input = Input(shape=(goal_input_shape),name="goal_input")
 
 		# Merge inputs with LSTM features
-		concat_input = concatenate([goals_input,lstm_outputs],name="stacked_input")
+		concat_input = concatenate([goals_input, lstm_outputs],name="stacked_input")
 
 		concat_output = Dense(100, activation="relu", name="concat_relu")(concat_input)
 
@@ -111,11 +151,11 @@ class GoalLSTM(object):
 		goal_output = Dense(n_outputs,activation="softmax",name="goal_output")(concat_output)
 			
 		# Create final model
-		model = Model([lstm_input,goals_input], goal_output)
+		model = Model([lstm_input, goals_input], goal_output)
 
 		# Compile model using loss
 		#     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-		model.compile(loss=self.max_ent_loss, optimizer='adam', metrics=[self.top_k_acc])
+		model.compile(loss=self.goal_loss(goals_input), optimizer='adam', metrics=[self.top_k_acc])
 
 		self.init_weights = model.get_weights()
 
@@ -173,7 +213,8 @@ class GoalLSTM(object):
 		# model_files_on_disk.sort()
 		# print('Goal Model files on disk: %s' % model_files_on_disk)
 		# goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
-		self.model = load_model(file_name, custom_objects={'max_ent_loss': self.max_ent_loss, 'top_k_acc': self.top_k_acc})
+		#self.model = load_model(file_name, custom_objects={'max_ent_loss': self.max_ent_loss, 'top_k_acc': self.top_k_acc})
+		self.model = load_model(file_name, custom_objects={'goal_loss': self.goal_loss, 'top_k_acc': self.top_k_acc})
 		print('Loaded model from %s' % file_name) 
 		# return goal_model
 
@@ -231,13 +272,20 @@ class TrajLSTM(object):
 	def _reset(self): 
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0):
-		val_data = ([val_set['history_traj_data'][:,:,:3], val_set['one_hot_goal']], 
-					 val_set['future_traj_data'][:,:,:2])
-		
+	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0, use_goal_info=True):
+		if use_goal_info:
+			val_goal = val_set['one_hot_goal']
+			train_goal = train_set['one_hot_goal']
+		else:
+			val_goal = np.zeros_like(val_set['one_hot_goal'])
+			train_goal = np.zeros_like(train_set['one_hot_goal'])
+
+		val_data   = ([val_set['history_traj_data'][:,:,:3], val_goal], 
+					  val_set['future_traj_data'][:,:,:2])
+
 		self._reset()
 		self.history = self.model.fit(
-					[train_set['history_traj_data'][:,:,:3], train_set['one_hot_goal']], 
+					[train_set['history_traj_data'][:,:,:3], train_goal], 
 					train_set['future_traj_data'][:,:,:2], 
 					epochs=num_epochs, 
 					validation_data=val_data, 
