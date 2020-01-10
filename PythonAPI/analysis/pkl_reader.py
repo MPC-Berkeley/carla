@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.io as sio
-from utils import fix_angle, generate_image
+from utils import fix_angle, generate_image, generate_image_ego
 import pdb
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -234,39 +234,55 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
     return features, labels, goal_snpts
 
 def generate_scene_image(features, parking_lot, ego_dims, static_objs):
-    f_test = features[-1] # just look at the first snippet
+    f_test = features[-5] # just look at the first snippet
     
     # Get center point (x,y) of the parking lot
-    x0 = np.mean([min(x[0] for x in lines),max(x[0] for x in parking_lot)])
-    y0 = np.mean([min(x[1] for x in lines),max(x[1] for x in parking_lot)])
+    x0 = np.mean([min(x[0] for x in parking_lot),max(x[0] for x in parking_lot)])
+    y0 = np.mean([min(x[1] for x in parking_lot),max(x[1] for x in parking_lot)])
 
     # Parking dimensions we want to consider
     parking_size = [20,65] # dX and dY
     res = 0.1 # in metres
-    xy_center = [x0,y0] # parking lot center
-   
+    img_center = [x0,y0] # parking lot center
+
+    h = int(parking_size[1] / res)
+    w = int(parking_size[0] / res)
+
     for ego_pose in f_test:
-        # todo: make this an image.  for now, just plot to simplify
-        f = plt.figure()
-        ax = f.gca()
-        
+        combined_img = np.zeros((h,w,3), dtype=np.uint8)
         # Parking lot image
-        parking_img = generate_image(parking_size,res,xy_center,parking_lot)
+        combined_img[:,:,0] = generate_image(parking_size,res,img_center,parking_lot)
         
         # Static objects image
-        static_img = generate_image(parking_size,res,xy_center,static_objs)
+        combined_img[:,:,1] = generate_image(parking_size,res,img_center,static_objs)
         
         # Ego image
-        ego_img = generate_image_ego(parking_size,res,xy_center,ego_dims)
+        ego_bb = [ego_pose[0],         # x
+                  ego_pose[1],         # y
+                  ego_dims['length'],  # dx
+                  ego_dims['width'],   # dy
+                  ego_pose[2]]         # theta
+
+        combined_img[:,:,2] = generate_image_ego(parking_size,res,img_center,ego_bb)
+        
+        combined_img = np.flip(combined_img, axis=0)
+
+        plt.figure(num=None, figsize=(10, 10), dpi=160, facecolor='w', edgecolor='k')
+        plt.imshow(combined_img)
+        #pdb.set_trace()
         
         # Combining the images -> parking_img + static_img + ego_img = full scene
 
+
+        ''' For reference/backup - plotting via pyplot: '''
+        f = plt.figure()
+        ax = f.gca()
         # Plot the parking lot in red.
         for line in parking_lot:
             x, y, l, w, th = line
             assert abs(th) < 0.01, "Parking line has non-zero heading!  Not handled."
 
-            bottom_left_corner = (x - l/2., -y - w/2.)
+            bottom_left_corner = (x - l/2., y - w/2.)
             r = Rectangle(bottom_left_corner, l, w, fc = 'r', ec = 'r')
             ax.add_patch(r)
             
@@ -303,3 +319,6 @@ def generate_scene_image(features, parking_lot, ego_dims, static_objs):
         plt.ylim(180, 240)
         plt.axis('equal')
         plt.show()
+
+        pdb.set_trace()
+        

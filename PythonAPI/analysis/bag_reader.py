@@ -17,25 +17,25 @@ def extract_parking_lines():
   dX, dY = round(0.185915, 3), round(51.3499985, 3)
 
   # Top big line
-  xTop, yTop = round(29365.3296875 / 100, 3), round(-20952.0 / 100, 3)
+  xTop, yTop = round(29365.3296875 / 100, 3), round(20952.0 / 100, 3)
   lines.append([xTop, yTop, dX, dY, 0])
 
   # Bottom big line
-  xBot, yBot  = round(27615.4296875 / 100, 3), round(-20952.0 / 100, 3)
+  xBot, yBot  = round(27615.4296875 / 100, 3), round(20952.0 / 100, 3)
   lines.append([xBot,yBot,dX, dY, 0])
 
   # Length and width for the short lines
   dx, dy = 5., round(0.170981, 3)
 
   # Left-most top short line
-  xt, yt = round(29111.3886719 / 100, 3), round(-23510.8730469 / 100, 3)
+  xt, yt = round(29111.3886719 / 100, 3), round(23510.8730469 / 100, 3)
   for k in range(17):
-    lines.append([xt,yt+k*3.2,dx,dy,0])
+    lines.append([xt,yt-k*3.2,dx,dy,0])
 
   # Left-most bottom short line
-  xb, yb = round(27871.3886719 / 100, 3), round(-23510.8730469 / 100, 3)
+  xb, yb = round(27871.3886719 / 100, 3), round(23510.8730469 / 100, 3)
   for k in range(17):
-    lines.append([xb,yb+k*3.2,dx,dy,0])
+    lines.append([xb,yb-k*3.2,dx,dy,0])
 
   return lines
 
