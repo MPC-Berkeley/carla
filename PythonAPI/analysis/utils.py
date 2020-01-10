@@ -3,6 +3,8 @@ import os
 import matplotlib.pyplot as plt
 import pickle
 from keras.utils import to_categorical
+from PIL import Image
+from PIL import ImageDraw
 
 def fix_angle(diff_ang):
     while diff_ang > np.pi:
@@ -167,3 +169,47 @@ def generate_image(parking_size,resolution,xy_center,lines):
         img[y1:y2,x1:x2,] = 1
         
     return img
+
+''' Rotates the rectangle with the angle around center of origin x,y'''
+def get_rect(x, y, width, height, angle):
+    rect = np.array([(-width/2, height/2), (width/2, height/2), (width/2, -height/2), (-width/2, -height/2), (-width/2, height/2)])
+    theta = (np.pi / 180.0) * angle
+    R = np.array([[np.cos(theta), -np.sin(theta)],
+                  [np.sin(theta), np.cos(theta)]])
+    offset = np.array([x, y])
+    transformed_rect = np.matmul(rect,R) + offset
+    print(transformed_rect.shape)
+    return transformed_rect
+
+def generate_image_ego(parking_size,resolution,xy_center,lines):
+    
+    # Total parking lot dimensions to consider
+    dX, dY = parking_size
+    
+    h, w = int(dY/resolution), int(dX/resolution)
+
+    # Base image
+    img = np.zeros((h,w),np.uint8)
+
+    # Lambda functions for transforming x,y into pixel space
+    xp = lambda x : int(np.round(w / dX * ( x - x0) + w / 2))
+    yp = lambda y : int(np.round(h / dY * ( y - y0) + h / 2 ))
+    
+    # Read the ego object
+    x_c,y_c,dx,dy,th = lines
+    
+    # Width and height in pixel space
+    dxp, dyp = dx/resolution, dy/resolution
+ 
+    
+    img = Image.fromarray(img)
+
+    # Draw a rotated rectangle on the image.
+    draw = ImageDraw.Draw(img)
+    rect = get_rect(x=xp(x_c), y=yp(y_c), width=dxp, height=dyp, angle=th)
+    draw.polygon([tuple(p) for p in rect], fill=1)
+    # Convert the Image data to a numpy array.
+    new_data = np.asarray(img)
+    return new_data
+
+

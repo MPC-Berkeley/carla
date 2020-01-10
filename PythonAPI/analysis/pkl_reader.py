@@ -242,7 +242,7 @@ def generate_scene_image(features, parking_lot, ego_dims, static_objs):
 
     # Parking dimensions we want to consider
     parking_size = [20,65] # dX and dY
-    resolution = 0.1 # in metres
+    res = 0.1 # in metres
     xy_center = [x0,y0] # parking lot center
    
     for ego_pose in f_test:
@@ -251,11 +251,15 @@ def generate_scene_image(features, parking_lot, ego_dims, static_objs):
         ax = f.gca()
         
         # Parking lot image
-        parking_img = generate_image(parking_size,resolution,xy_center,parking_lot)
+        parking_img = generate_image(parking_size,res,xy_center,parking_lot)
         
         # Static objects image
-        static_img = generate_image(parking_size,resolution,xy_center,static_objs)
+        static_img = generate_image(parking_size,res,xy_center,static_objs)
         
+        # Ego image
+        ego_img = generate_image_ego(parking_size,res,xy_center,ego_dims)
+        
+        # Combining the images -> parking_img + static_img + ego_img = full scene
 
         # Plot the parking lot in red.
         for line in parking_lot:
