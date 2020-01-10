@@ -99,7 +99,7 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     prune_start: if True, remove non-moving portion of data at the start
     prune_end:   if True, remove non-moving portion of data at the end
     min_vel_thresh: minimum velocity (m/s) above which vehicle is moving
-    exclude_collisions: Raises a 
+    exclude_collisions: Raises an error if collision detected.
     '''
     # Extract intention signal time (first button press) 
     intention_time = res_dict['intention_time_list'][0]
@@ -192,6 +192,7 @@ def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_int
         return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp))
     
 def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind, end_ind, goal_ind, goals,\
+                                           parking_lot, ego_dims, static_objs, \
                                            Nhist=5, Npred=20, Nskip=5, dt=0.1, ego_frame=False):
     features = []; labels = []; goal_snpts = []
     
@@ -210,8 +211,52 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
         goal_snpts.append(goals.copy())
         
     goal_snpts = np.array(goal_snpts)
+
+
+    ''' 
+    Scene Image construction. Resolution/Image Params hardcoded for now.
+    '''
+    # Get center point (x,y) of the parking lot
+    x0 = np.mean([min(x[0] for x in parking_lot),max(x[0] for x in parking_lot)])
+    y0 = np.mean([min(x[1] for x in parking_lot),max(x[1] for x in parking_lot)])
+
+    # Parking dimensions we want to consider
+    parking_size = [20,65] # dX and dY
+    res = 0.1 # in metres
+    img_center = [x0,y0] # parking lot center
+
+    h = int(parking_size[1] / res)
+    w = int(parking_size[0] / res)
+
+    scene_images = np.zeros((len(features), Nhist, h, w, 3), dtype=np.uint8)
+    scene_images[:,:,:,:,0] = generate_image(parking_size,res,img_center,parking_lot)
+    scene_images[:,:,:,:,1] = generate_image(parking_size,res,img_center,static_objs)
+
+
+    for ind_f, feature in enumerate(features):
+        for ind_p, ego_pose in enumerate(feature):
+            ego_bb = [ego_pose[0],         # x
+                      ego_pose[1],         # y
+                      ego_dims['length'],  # dx
+                      ego_dims['width'],   # dy
+                      ego_pose[2]]         # theta
+
+            scene_images[ind_f,ind_p,:,:,2] = generate_image_ego(parking_size,res,img_center,ego_bb)
+
+    scene_images = np.flip(scene_images, axis=2) # flip based on pixel axis to align with map frame
+
+    ''' 
+    # For visualization/debugging
+    # see the first snippet
+    plt.figure(figsize=(10, 10), dpi=160, facecolor='w', edgecolor='k')
+    for i in range(Nhist):
+        plt.subplot(1, Nhist, i+1)
+        plt.imshow(scene_images[5, i, :, :, :])
+    plt.tight_layout()
+    plt.show()
+    '''    
+
     # Transform all snippets into ego frame, if ego_frame=True
-    # TODO: check if transform is done correctly.
     if ego_frame:
         for id_snpt in range(len(features)):
             current = features[id_snpt][-1, :].copy()
@@ -231,8 +276,10 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
             for id_g in range(len(goals)):
                 goal_snpts[id_snpt][id_g, :2] = R @ (goal_snpts[id_snpt][id_g, :2] - curr_position)
 
-    return features, labels, goal_snpts
+    return np.array(features), scene_images, np.array(labels), np.array(goal_snpts)
 
+''' 
+# Old code for reference/debugging:
 def generate_scene_image(features, parking_lot, ego_dims, static_objs):
     f_test = features[-5] # just look at the first snippet
     
@@ -273,8 +320,6 @@ def generate_scene_image(features, parking_lot, ego_dims, static_objs):
         
         # Combining the images -> parking_img + static_img + ego_img = full scene
 
-
-        ''' For reference/backup - plotting via pyplot: '''
         f = plt.figure()
         ax = f.gca()
         # Plot the parking lot in red.
@@ -321,4 +366,4 @@ def generate_scene_image(features, parking_lot, ego_dims, static_objs):
         plt.show()
 
         pdb.set_trace()
-        
+'''
