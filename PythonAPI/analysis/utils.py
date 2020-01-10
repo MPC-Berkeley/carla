@@ -186,7 +186,6 @@ def get_rect(x, y, width, height, angle):
                   [-np.sin(theta), np.cos(theta)]])
     offset = np.array([x, y])
     transformed_rect = np.matmul(rect,R) + offset
-    print(transformed_rect.shape)
     return transformed_rect
 
 def generate_image_ego(parking_size,resolution,img_center,lines):
@@ -206,11 +205,9 @@ def generate_image_ego(parking_size,resolution,img_center,lines):
     
     # Read the ego object
     x_c,y_c,dx,dy,th = lines
-    print('theta in gie', th)
     
     # Width and height in pixel space
     dxp, dyp = dx/resolution, dy/resolution
- 
     
     img = Image.fromarray(img)
 
