@@ -195,6 +195,25 @@ class World(object):
         actor_type = get_actor_display_name(self.player)
         self.hud.notification(actor_type)
 
+    def next_ep(self):
+        spawn_point = self.player.get_transform()
+        
+        vel = self.player.get_velocity()
+        vel.x = 0
+        vel.y = 0
+        vel.z = 0
+        self.player.set_velocity(vel)
+
+        # Set the 
+        spawn_point.location.x = 285.0
+        spawn_point.location.y = -240.0
+        spawn_point.rotation.yaw = 90.0
+        spawn_point.location.z += 0.5
+        # self.player.set_location(spawn_point.location)
+        spawn_point.rotation.roll = 0.0
+        spawn_point.rotation.pitch = 0.0
+        self.player.set_transform(spawn_point)
+
     def next_weather(self, reverse=False):
         self._weather_index += -1 if reverse else 1
         self._weather_index %= len(self._weather_presets)
