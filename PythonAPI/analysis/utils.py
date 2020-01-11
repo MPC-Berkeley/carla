@@ -3,6 +3,9 @@ import os
 import matplotlib.pyplot as plt
 import pickle
 from keras.utils import to_categorical
+from PIL import Image
+from PIL import ImageDraw
+import pdb
 
 def fix_angle(diff_ang):
     while diff_ang > np.pi:
@@ -142,3 +145,78 @@ def sup_plot(model_name, plot_set, traj_idx, goal_pred, traj_pred_dict, limit=No
             print( model_name + ": Trajectory # %03d movie saved successfully." % num_traj)
         else:
             print( model_name + ": Meet problem saving Trajectory # %03d movie." % num_traj)
+            
+def generate_image(parking_size,resolution,img_center,lines):
+    
+    # Total parking lot dimensions to consider
+    dX, dY = parking_size
+    
+    h, w = int(dY/resolution), int(dX/resolution)
+    x0, y0 = img_center
+
+    # Lambda functions for transforming x,y into pixel space
+    xp = lambda x : int(np.round(w / dX * ( x - x0) + w / 2))
+    yp = lambda y : int(np.round(h / dY * ( y - y0) + h / 2 ))
+    
+    # Base image
+    img = np.zeros((h,w),np.uint8)
+    
+    # Loop over parking lines
+    for x_center,y_center,dx,dy,th in lines:
+        
+        # pixel width in x and y dimension
+        dxp,dyp = int(np.round(dx/resolution)),int(np.round(dy/resolution))
+        x1,y1 = int(np.round(xp(x_center)-dxp/2)),int(np.round(yp(y_center)-dyp/2))
+        x2,y2 = int(np.round(xp(x_center)+dxp/2)),int(np.round(yp(y_center)+dyp/2))
+
+        if x1 < 0 or x2 < 0:
+            continue
+        elif x1 > w or x2 > w:
+            continue
+
+        img[y1:y2,x1:x2] = 255
+        
+    return img
+
+''' Rotates the rectangle with the angle around center of origin x,y'''
+def get_rect(x, y, width, height, angle):
+    rect = np.array([(-width/2, height/2), (width/2, height/2), (width/2, -height/2), (-width/2, -height/2), (-width/2, height/2)])
+    theta = angle #(np.pi / 180.0) * angle
+    R = np.array([[np.cos(theta), np.sin(theta)],
+                  [-np.sin(theta), np.cos(theta)]])
+    offset = np.array([x, y])
+    transformed_rect = np.matmul(rect,R) + offset
+    return transformed_rect
+
+def generate_image_ego(parking_size,resolution,img_center,lines):
+    
+    # Total parking lot dimensions to consider
+    dX, dY = parking_size
+    
+    h, w = int(dY/resolution), int(dX/resolution)
+    x0, y0 = img_center
+
+    # Base image
+    img = np.zeros((h,w),np.uint8)
+
+    # Lambda functions for transforming x,y into pixel space
+    xp = lambda x : int(np.round(w / dX * ( x - x0) + w / 2))
+    yp = lambda y : int(np.round(h / dY * ( y - y0) + h / 2 ))
+    
+    # Read the ego object
+    x_c,y_c,dx,dy,th = lines
+    
+    # Width and height in pixel space
+    dxp, dyp = dx/resolution, dy/resolution
+    
+    img = Image.fromarray(img)
+
+    # Draw a rotated rectangle on the image.
+    draw = ImageDraw.Draw(img)
+    rect = get_rect(x=xp(x_c), y=yp(y_c), width=dxp, height=dyp, angle=th)
+    draw.polygon([tuple(p) for p in rect], fill=255)
+    # Convert the Image data to a numpy array.
+    new_data = np.asarray(img)
+    return new_data
+
+

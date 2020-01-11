@@ -5,32 +5,37 @@ import numpy as np
 #from cv_bridge import CvBridge
 
 def extract_parking_lines():
+  # Returns hard-coded lane markings for the parking lot map.
+  # Top = horizontal line for the "top" row
+  # Bot = horizontal line for the "bottom" row
+  # remaining lines are the vertical lines separating parking spots
+  # Contains the lines in format: x, y, dx, dy, theta,
+  # where (x,y) is the line center, (dx,dy) is the thickness, and theta is the orientation
 
-  # Contains the lines in format: x, y, dx, dy, theta
   lines = []
   # Length and width for the long lines
-  dX, dY = 0.185915, 51.3499985
+  dX, dY = round(0.185915, 3), round(51.3499985, 3)
 
   # Top big line
-  xTop, yTop = 29365.3296875 / 100, -20952.0 / 100
+  xTop, yTop = round(29365.3296875 / 100, 3), round(20952.0 / 100, 3)
   lines.append([xTop, yTop, dX, dY, 0])
 
   # Bottom big line
-  xBot, yBot  = 27615.4296875 / 100, -20952.0 / 100
+  xBot, yBot  = round(27615.4296875 / 100, 3), round(20952.0 / 100, 3)
   lines.append([xBot,yBot,dX, dY, 0])
 
   # Length and width for the short lines
-  dx, dy = 5, 0.170981
+  dx, dy = 5., round(0.170981, 3)
 
   # Left-most top short line
-  xt, yt = 29111.3886719 / 100, -23510.8730469 / 100
-  for k in range(16):
-    lines.append([xt,yt+k*3.2,dx,dy,0])
+  xt, yt = round(29111.3886719 / 100, 3), round(23510.8730469 / 100, 3)
+  for k in range(17):
+    lines.append([xt,yt-k*3.2,dx,dy,0])
 
   # Left-most bottom short line
-  xb, yb = 27871.3886719 / 100, -23510.8730469 / 100
-  for k in range(16):
-    lines.append([xb,yb+k*3.2,dx,dy,0])
+  xb, yb = round(27871.3886719 / 100, 3), round(23510.8730469 / 100, 3)
+  for k in range(17):
+    lines.append([xb,yb-k*3.2,dx,dy,0])
 
   return lines
 
@@ -229,7 +234,7 @@ def process_bag(bag):
 
     res_dict['vehicle_odometry_dict'] = vehicle_odometry_dict
 
-    # Other Vehicle Object List
+    # Other Vehicle Object List.
     vehicle_object_lists = []
     for topic, msg, t in b.read_messages('/carla/hero/objects'):
         veh_obj_list = []
@@ -252,10 +257,39 @@ def process_bag(bag):
         vehicle_object_lists.append(veh_obj_list)
     res_dict['vehicle_object_lists'] = vehicle_object_lists
 
-
+    ''' Items needed for rasterized image representation are below '''
     res_dict['parking_lot'] = extract_parking_lines()
+    res_dict['ego_dimensions'] = {}
+    for topic, msg, t in b.read_messages('/carla/objects'):
+        ego_ind = -1
+        for ind, obj in enumerate(msg.objects):
+            if obj.id == ego_info_dict['id']:
+                ego_ind = ind
+                break
 
+        assert ego_ind >= 0, "Ego vehicle not found in object list!"
 
+        res_dict['ego_dimensions']['length'] = msg.objects[ego_ind].shape.dimensions[0]
+        res_dict['ego_dimensions']['width']  = msg.objects[ego_ind].shape.dimensions[1]
+        break
+
+    res_dict['static_object_list'] = []
+    # Contains the bounding boxes in format: x, y, dx, dy, theta,
+    # where (x,y) is the bb center, (dx,dy) is the bb thickness, and theta is the orientation
+    static_object_ind = -1 
+    for ind, obj_list in enumerate(res_dict['vehicle_object_lists']):
+        if abs(obj_list[0]['acceleration'][-1]) < 0.2:
+            # Hack to find when the cars stop falling after being spawned.
+            static_object_ind = ind
+            break
+    assert static_object_ind >= 0, "Could not find when the vehicles stop moving!"
+    for obj in res_dict['vehicle_object_lists'][static_object_ind]:
+        x, y, z = obj['position']
+        theta = round(obj['orientation'][0], 2) # TODO, confirm this again.
+        assert theta==0., "Parked vehicle has non-zero heading!"
+        dx, dy, dz    = obj['dimensions']
+        obj_entry = [x, y, dx, dy, theta]
+        res_dict['static_object_list'].append(obj_entry)
 
     '''
     # View just the first image.  This can be done in Python2, issues with Python3 here.
@@ -269,5 +303,5 @@ def process_bag(bag):
             plt.imshow(cv_image)
             image_viewed = True
     '''
-    outlier_removal(res_dict)
+    outlier_removal(res_dict) # this is applied to ego odometry for now
     return res_dict
