@@ -41,9 +41,9 @@ class CombinedLSTM(object):
 
 		self.use_goal_info = use_goal_info
 
-	def fit(self, train_set, val_set, batch_size=64, verbose=0):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info)
+	def fit(self, train_set, val_set, batch_size=64, verbose=0, use_image = False):
+		self.goal_model.fit_model(train_set, val_set, num_epochs=10, batch_size=batch_size, verbose=verbose, use_image=use_image)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=10, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info)
 
 	def predict(self, test_set, top_k_goal=[]):
 		goal_pred = self.goal_model.predict(test_set)
@@ -117,21 +117,23 @@ class GoalLSTM(object):
 		
 		cnn_input  = Input(shape=(image_input_shape),name="image_history")
 
-		cnn_layer = TimeDistributed(Conv2D(1, kernel_size=(3,3),activation='relu'))(cnn_input)
-		print(cnn_layer)
-		
-		# cnn_outputs = []
-		# for k in range(N_hist):
-		# 	cnn_outputs.append(cnn_layer(cnn_input[k]))
+		# DEFINE MODEL HERE
+		cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
+		fl = TimeDistributed(Flatten())(cnn_layer)
+		cnn_out = TimeDistributed(Dense(10))(fl)
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
+		print(lstm_input)
+
+		lstm_cnn_inp = concatenate([lstm_input,cnn_out])
+		print('Lstm cnn',lstm_cnn_inp)
 
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
 		# LSTM outputs
-		lstm_outputs, state_h, state_c = lstm(lstm_input)
+		lstm_outputs, state_h, state_c = lstm(lstm_cnn_inp)
 
 		# Input for goals
 		goals_input = Input(shape=(goal_input_shape),name="goal_input")
@@ -145,7 +147,7 @@ class GoalLSTM(object):
 		goal_output = Dense(n_outputs,activation="softmax",name="goal_output")(concat_output)
 
 		# Create final model
-		model = Model([lstm_input, goals_input], goal_output)
+		model = Model([lstm_input, goals_input,cnn_input], goal_output)
 
 		# Compile model using loss
 		#     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -158,18 +160,27 @@ class GoalLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64,verbose=0):
+	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64,verbose=0,use_image=False):
 		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
 		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
 
 		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
-
+		goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
+    
     # All intention labels, with shape (batch_size, goal_nums)
 		goal_idx = label[:, 0, -1]
+		goal_idx_val = label_val[:,0,-1]
+
     # Convert to one-hot and the last one is undecided (-1)
 		one_hot_goal = to_categorical(goal_idx, num_classes=33)
-		train_data = [feature, goal]
-		#val_data = [[feature_val, goal_val], label_val]
+		one_hot_goal_val = to_categorical(goal_idx_val, num_classes=33)
+
+		if use_image:
+			train_data = [feature, goal,image]
+			val_data = ([feature_val, goal_val,image_val], one_hot_goal_val)
+		else:
+			train_data = [feature, goal,tf.zeros_like(image)]
+			val_data = ([feature_val, goal_val,tf.zeros_like(image_val)], one_hot_goal_val)
 
 		self._reset()
 		self.history = self.model.fit(
@@ -177,10 +188,11 @@ class GoalLSTM(object):
           one_hot_goal,
           steps_per_epoch=count // batch_size,
 					epochs=num_epochs,
-					#validation_data=val_data,
+					validation_data=val_data,
+					validation_steps = count_val // batch_size,
 					verbose=verbose)
-		#if verbose:
-		#	self.plot_history()
+		if verbose:
+			self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
@@ -289,22 +301,21 @@ class TrajLSTM(object):
 		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
 
 		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+		goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
 
     # All intention labels, with shape (batch_size, goal_nums)
 		goal_idx = label[:, 0, -1]
+		goal_idx_val = label_val[:, 0, -1]
     # Convert to one-hot and the last one is undecided (-1)
 		train_goal = to_categorical(goal_idx, num_classes=33)
-		train_data = [feature, train_goal]
-		#val_data = [[feature_val, goal_val], label_val]
-
+		train_goal_val = to_categorical(goal_idx_val, num_classes=33)
 
 		if not use_goal_info:
-			#val_goal = val_set['one_hot_goal']
-			#val_goal = np.zeros_like(val_set['one_hot_goal'])
 			train_goal = np.zeros_like(train_goal)
+			train_goal_val = np.zeros_like(train_goal_val)
 
-		#val_data   = ([val_set['history_traj_data'][:,:,:3], val_goal],
-		#			  val_set['future_traj_data'][:,:,:2])
+		train_data = [feature, train_goal]
+		val_data = [[feature_val, train_goal_val], label_val[:,:,:2]]
 
 		self._reset()
 		self.history = self.model.fit(
@@ -312,10 +323,11 @@ class TrajLSTM(object):
 					label[:,:,:2],
           steps_per_epoch = count // batch_size,
 					epochs=num_epochs,
-					#validation_data=val_data,
+					validation_data=val_data,
+					validation_steps = count_val // batch_size,
 					verbose = verbose)
-		#if verbose:
-		#	self.plot_history()
+		if verbose:
+			self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
