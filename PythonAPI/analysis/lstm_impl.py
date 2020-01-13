@@ -37,13 +37,13 @@ class CombinedLSTM(object):
 		future_dim	        = future_shape[2]
 
 		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
-		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
+		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
 		self.use_goal_info = use_goal_info
 
 	def fit(self, train_set, val_set, batch_size=64, verbose=0, use_image = False):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=10, batch_size=batch_size, verbose=verbose, use_image=use_image)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=10, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info)
+		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose, use_image=use_image)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info,use_image=use_image)
 
 	def predict(self, test_set, top_k_goal=[]):
 		goal_pred = self.goal_model.predict(test_set)
@@ -115,12 +115,13 @@ class GoalLSTM(object):
 
 	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs):
 		
+		
+		# ---- DEFINE MODEL HERE ------
 		cnn_input  = Input(shape=(image_input_shape),name="image_history")
-
-		# DEFINE MODEL HERE
 		cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
 		fl = TimeDistributed(Flatten())(cnn_layer)
 		cnn_out = TimeDistributed(Dense(10))(fl)
+		# -----------------------------
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
@@ -247,24 +248,34 @@ class GoalLSTM(object):
 
 class TrajLSTM(object):
 	"""docstring for TrajLSTM"""
-	def __init__(self, traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=100):
+	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, hidden_dim=100):
 		self.history    = None
 
-		self.model = self._create_model(traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim)
+		self.model = self._create_model(traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim)
 		''' Debug '''
 		# plot_model(self.model,to_file='traj_model.png')
 		# print(self.model.summary())
 
-	def _create_model(self, traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim):
+	def _create_model(self, traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim):
+
+
+		# ---- DEFINE MODEL HERE ------
+		cnn_input  = Input(shape=(image_input_shape),name="image_history")
+		cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
+		fl = TimeDistributed(Flatten())(cnn_layer)
+		cnn_out = TimeDistributed(Dense(10))(fl)
+		# -----------------------------
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="trajectory_input")
+
+		lstm_cnn_input = concatenate([lstm_input,cnn_out])
 
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
 		# LSTM outputs
-		lstm_outputs, state_h, state_c = lstm(lstm_input)
+		lstm_outputs, state_h, state_c = lstm(lstm_cnn_input)
 		encoder_states = [state_h,state_c]
 
 		# Input for goals
@@ -283,7 +294,7 @@ class TrajLSTM(object):
 		decoder_fully_connected = TimeDistributed(Dense(future_dim))(decoder_outputs)
 
 		# Create final model
-		model = Model([lstm_input,goals_input], decoder_fully_connected)
+		model = Model([lstm_input,goals_input,cnn_input], decoder_fully_connected)
 
 		# Compile model using loss
 		model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
@@ -295,7 +306,7 @@ class TrajLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0, use_goal_info=True):
+	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0, use_goal_info=True,use_image=False):
 
 		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
 		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
@@ -314,8 +325,12 @@ class TrajLSTM(object):
 			train_goal = np.zeros_like(train_goal)
 			train_goal_val = np.zeros_like(train_goal_val)
 
-		train_data = [feature, train_goal]
-		val_data = [[feature_val, train_goal_val], label_val[:,:,:2]]
+		if use_image:
+			train_data = [feature, train_goal,image]
+			val_data = [[feature_val, train_goal_val,image_val], label_val[:,:,:2]]
+		else:
+			train_data = [feature, train_goal,tf.zeros_like(image)]
+			val_data = [[feature_val, train_goal_val,tf.zeros_like(image_val)], label_val[:,:,:2]]
 
 		self._reset()
 		self.history = self.model.fit(
