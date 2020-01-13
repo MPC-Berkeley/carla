@@ -23,9 +23,9 @@ def _float_feature_list(value):
 	return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
 def write_tfrecord(features, scene_images, labels, goal_snpts,file_location,meta_data_dict):
-
+  # Note: meta_data_dict is not used.  Can be incorporated into the tfrecord in the future.
   writer = tf.io.TFRecordWriter(file_location)
-
+  
   for feature, scene_image, label,  goal_snpt in zip(features,scene_images,labels,goal_snpts):
 
       ftr = {'image_hist'   : _bytes_feature_list(tf.compat.as_bytes(scene_image.tostring())),
@@ -37,12 +37,10 @@ def write_tfrecord(features, scene_images, labels, goal_snpts,file_location,meta
              'goal_snpt'    : _bytes_feature_list(tf.io.serialize_tensor(goal_snpt)),
              'goal_snpt_size' : _bytes_feature_list(np.array(goal_snpt.shape,np.int32).tostring()),
             }
-      #pdb.set_trace()
       example = tf.train.Example(features = tf.train.Features(feature=ftr))
       writer.write(example.SerializeToString())
 
   writer.close()
-	#pass
 
 def _parse_function(proto):
     ftr = {'image_hist'     : tf.io.FixedLenFeature([], tf.string),
