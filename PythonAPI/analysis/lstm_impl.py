@@ -11,7 +11,7 @@ from keras import Input, Model
 from keras.models import Sequential
 from keras.models import load_model
 # from keras.layers import *
-from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate
+from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate, Conv2D
 from keras.layers import Activation, TimeDistributed, RepeatVector, Embedding
 from keras.layers.recurrent import LSTM
 from keras.callbacks import EarlyStopping
@@ -28,7 +28,7 @@ import glob
 from datetime import datetime
 
 class CombinedLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
+	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -36,7 +36,7 @@ class CombinedLSTM(object):
 		future_horizon      = future_shape[1]
 		future_dim	        = future_shape[2]
 
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
 		self.use_goal_info = use_goal_info
@@ -77,11 +77,11 @@ class CombinedLSTM(object):
 
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
-	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=100):
+	def __init__(self, traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100):
 		self.beta       = beta
 		self.gamma      = gamma
 		self.history    = None
-		self.model  = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
+		self.model  = self._create_model(traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs)
 
 		''' Debug '''
 		#plot_model(self.model, to_file='goal_model.png')
@@ -113,7 +113,17 @@ class GoalLSTM(object):
 	def top_k_acc(self, y_true, y_pred, k=3):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
-	def _create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
+	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs):
+		
+		cnn_input  = Input(shape=(image_input_shape),name="image_history")
+
+		cnn_layer = TimeDistributed(Conv2D(1, kernel_size=(3,3),activation='relu'))(cnn_input)
+		print(cnn_layer)
+		
+		# cnn_outputs = []
+		# for k in range(N_hist):
+		# 	cnn_outputs.append(cnn_layer(cnn_input[k]))
+
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
 
