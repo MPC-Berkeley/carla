@@ -173,6 +173,7 @@ def game_loop(args):
 
                 if controller_return == 11:
                     # Next episode
+                    intent_flag = False
                     break
 
                 if controller_return == 6:
@@ -198,7 +199,8 @@ def game_loop(args):
 
             spwnr.remove()
             # roslaunch_proc.send_signal(subprocess.signal.SIGINT)
-            world.restart()
+            # world.restart()
+            world.next_ep()
             print('Done with ep loop')
                 # world.destroy()
 
