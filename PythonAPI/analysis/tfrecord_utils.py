@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 import pdb
+from keras.utils import to_categorical
+
 def _int64_feature_list(value):
 	if not isinstance(value, list):
 		value = [value]
@@ -75,20 +77,55 @@ def _parse_function(proto):
 
     return image, feature, label, goal
 
-def read_tfrecord(files):
+def read_tfrecord(files,cutting=False,shuffle=True,batch_size=64):
 
+  count = 0
+  for f in files:
+        for record in tf.compat.v1.io.tf_record_iterator(f):
+            count += 1
+            
   dataset = tf.data.TFRecordDataset(files)
   dataset = dataset.map(_parse_function)
 
-  dataset = dataset.shuffle(40)
+  dataset = dataset.repeat()
+  if shuffle:
+    dataset = dataset.shuffle(2048)
+  dataset = dataset.batch(batch_size)
 
   iterator = dataset.__iter__()
 
 
   image, feature, label, goal = iterator.get_next()
 
-  return image, feature, label, goal
+  if cutting:
+    feature = feature[:,:,:3]
+    
+  return image, feature, label, goal, count
 
+
+def read_gt_tfrecord(files):
+  count = 0
+  for f in files:
+        for record in tf.compat.v1.io.tf_record_iterator(f):
+            count += 1
+
+  dataset = tf.data.TFRecordDataset(files)
+  dataset = dataset.map(_parse_function)
+
+  iterator = dataset.__iter__()
+
+  goal_gt =  []
+  traj_gt =  []
+
+  for k in range(count):
+    image, feature, label, goal = iterator.get_next()
+
+    goal_idx = label[0, -1]
+    # Convert to one-hot and the last one is undecided (-1)
+    goal_gt.append(to_categorical(goal_idx, num_classes=33))
+    traj_gt.append(label[:,:-1].numpy())
+
+  return np.array(goal_gt),np.array(traj_gt)
 
 
 
