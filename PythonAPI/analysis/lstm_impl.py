@@ -11,7 +11,7 @@ from keras import Input, Model
 from keras.models import Sequential
 from keras.models import load_model
 # from keras.layers import *
-from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate
+from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate, Conv2D
 from keras.layers import Activation, TimeDistributed, RepeatVector, Embedding
 from keras.layers.recurrent import LSTM
 from keras.callbacks import EarlyStopping
@@ -22,12 +22,13 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-# import tensorflow as tf
+from tfrecord_utils import read_tfrecord, read_gt_tfrecord
+import tensorflow as tf
 import glob
 from datetime import datetime
 
 class CombinedLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
+	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -35,14 +36,14 @@ class CombinedLSTM(object):
 		future_horizon      = future_shape[1]
 		future_dim	        = future_shape[2]
 
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
 
 		self.use_goal_info = use_goal_info
 
-	def fit(self, train_set, val_set, verbose=0):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=100, verbose=verbose, use_goal_info=self.use_goal_info)
+	def fit(self, train_set, val_set, batch_size=64, verbose=0):
+		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info)
 
 	def predict(self, test_set, top_k_goal=[]):
 		goal_pred = self.goal_model.predict(test_set)
@@ -50,31 +51,14 @@ class CombinedLSTM(object):
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
 		traj_pred_dict = dict()
-		traj_test_set = test_set.copy()
 
-		# If don't want the goal
-		if top_k_goal == None or self.use_goal_info == False:
-			# Set others to be zeros while keep the argmax to be 1.
-			traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
-			traj_pred = self.traj_model.predict(traj_test_set)
-			traj_pred_dict[0] = traj_pred
-		# If using the ground truth goal
-		elif top_k_goal == []:
-			traj_pred = self.traj_model.predict(traj_test_set)
-			traj_pred_dict[0] = traj_pred
-		else:
-			top_idxs = np.argsort(goal_pred, axis=1)
-			for k in top_k_goal:
-				kth_idx = top_idxs[:, -1-k]
-				# Set others to be zeros while keep the argmax to be 1.
-				traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
-				for row, col in enumerate(kth_idx):
-					traj_test_set['one_hot_goal'][row, col] = 1.
+		traj_pred = self.traj_model.predict(test_set)
+		traj_pred_dict[0] = traj_pred
 
-				traj_pred = self.traj_model.predict(traj_test_set)
-				traj_pred_dict[k] = traj_pred
+		# Get ground truth here
+		goal_gt, traj_gt = read_gt_tfrecord(test_set)
 
-		return goal_pred, traj_pred_dict
+		return goal_pred, goal_gt, traj_pred_dict, traj_gt
 
 	def save(self, filename):
 		try:
@@ -93,11 +77,11 @@ class CombinedLSTM(object):
 
 class GoalLSTM(object):
 	"""docstring for GoalLSTM"""
-	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=100):
+	def __init__(self, traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100):
 		self.beta       = beta
 		self.gamma      = gamma
 		self.history    = None
-		self.model  = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
+		self.model  = self._create_model(traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs)
 
 		''' Debug '''
 		#plot_model(self.model, to_file='goal_model.png')
@@ -110,11 +94,11 @@ class GoalLSTM(object):
 		def loss(y_true, y_pred):
 			loss1 = K.categorical_crossentropy(y_true, y_pred)
 			loss2 = K.categorical_crossentropy(y_pred, y_pred)
-			loss3 = K.sum(  K.relu( y_pred[:,:32] - K.reshape(occupancy, (K.shape(occupancy)[0], 32, 3))[:,:,2] ), axis = 1  ) 
+			loss3 = K.sum(  K.relu( y_pred[:,:32] - K.reshape(occupancy, (K.shape(occupancy)[0], 32, 3))[:,:,2] ), axis = 1  )
 
 			return loss1 - beta * loss2 + gamma * loss3
 
-		return loss 
+		return loss
 
 	def max_ent_loss(self, y_true, y_pred):
 		loss1 = K.categorical_crossentropy(y_true, y_pred)
@@ -129,7 +113,17 @@ class GoalLSTM(object):
 	def top_k_acc(self, y_true, y_pred, k=3):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
-	def _create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
+	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs):
+		
+		cnn_input  = Input(shape=(image_input_shape),name="image_history")
+
+		cnn_layer = TimeDistributed(Conv2D(1, kernel_size=(3,3),activation='relu'))(cnn_input)
+		print(cnn_layer)
+		
+		# cnn_outputs = []
+		# for k in range(N_hist):
+		# 	cnn_outputs.append(cnn_layer(cnn_input[k]))
+
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
 
@@ -149,7 +143,7 @@ class GoalLSTM(object):
 
 		# Final FC layer with a softmax activation
 		goal_output = Dense(n_outputs,activation="softmax",name="goal_output")(concat_output)
-			
+
 		# Create final model
 		model = Model([lstm_input, goals_input], goal_output)
 
@@ -161,22 +155,32 @@ class GoalLSTM(object):
 
 		return model
 
-	def _reset(self): 
+	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0):
-		val_data = ([val_set['history_traj_data'][:,:,:3], val_set['goal_position']], 
-					 val_set['one_hot_goal'])
+	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64,verbose=0):
+		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
+		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
+
+		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+
+    # All intention labels, with shape (batch_size, goal_nums)
+		goal_idx = label[:, 0, -1]
+    # Convert to one-hot and the last one is undecided (-1)
+		one_hot_goal = to_categorical(goal_idx, num_classes=33)
+		train_data = [feature, goal]
+		#val_data = [[feature_val, goal_val], label_val]
 
 		self._reset()
 		self.history = self.model.fit(
-					[train_set['history_traj_data'][:,:,:3], train_set['goal_position']], 
-					train_set['one_hot_goal'], 
-					epochs=num_epochs, 
-					validation_data=val_data,
+					train_data,
+          one_hot_goal,
+          steps_per_epoch=count // batch_size,
+					epochs=num_epochs,
+					#validation_data=val_data,
 					verbose=verbose)
-		if verbose:
-			self.plot_history()
+		#if verbose:
+		#	self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
@@ -207,7 +211,7 @@ class GoalLSTM(object):
 		# file_name = "./model/goal_model_%.4f_%s.h5" % (self.history.history['val__top_k_acc'][-1], dt_string)
 		self.model.save(file_name)
 		print('Saved model %s' % file_name)
-		
+
 	def load(self, file_name):
 		# model_files_on_disk = glob.glob('./model/goal_model_*.h5')
 		# model_files_on_disk.sort()
@@ -215,11 +219,18 @@ class GoalLSTM(object):
 		# goal_model = load_model(model_files_on_disk[0], custom_objects={'_max_ent_loss': self._max_ent_loss, '_top_k_acc': self._top_k_acc})
 		#self.model = load_model(file_name, custom_objects={'max_ent_loss': self.max_ent_loss, 'top_k_acc': self.top_k_acc})
 		self.model = load_model(file_name, custom_objects={'goal_loss': self.goal_loss, 'top_k_acc': self.top_k_acc})
-		print('Loaded model from %s' % file_name) 
+		print('Loaded model from %s' % file_name)
 		# return goal_model
 
 	def predict(self, test_set):
-		goal_pred = self.model.predict([test_set['history_traj_data'][:,:,:3], test_set['goal_position']])
+		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,shuffle=False,batch_size=1)
+		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+
+    # Convert to one-hot and the last one is undecided (-1)
+		test_data = [feature, goal]
+
+		goal_pred = self.model.predict(test_data, steps=count)
+
 		return goal_pred
 
 class TrajLSTM(object):
@@ -269,29 +280,42 @@ class TrajLSTM(object):
 
 		return model
 
-	def _reset(self): 
+	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, verbose=0, use_goal_info=True):
-		if use_goal_info:
-			val_goal = val_set['one_hot_goal']
-			train_goal = train_set['one_hot_goal']
-		else:
-			val_goal = np.zeros_like(val_set['one_hot_goal'])
-			train_goal = np.zeros_like(train_set['one_hot_goal'])
+	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0, use_goal_info=True):
 
-		val_data   = ([val_set['history_traj_data'][:,:,:3], val_goal], 
-					  val_set['future_traj_data'][:,:,:2])
+		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
+		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
+
+		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+
+    # All intention labels, with shape (batch_size, goal_nums)
+		goal_idx = label[:, 0, -1]
+    # Convert to one-hot and the last one is undecided (-1)
+		train_goal = to_categorical(goal_idx, num_classes=33)
+		train_data = [feature, train_goal]
+		#val_data = [[feature_val, goal_val], label_val]
+
+
+		if not use_goal_info:
+			#val_goal = val_set['one_hot_goal']
+			#val_goal = np.zeros_like(val_set['one_hot_goal'])
+			train_goal = np.zeros_like(train_goal)
+
+		#val_data   = ([val_set['history_traj_data'][:,:,:3], val_goal],
+		#			  val_set['future_traj_data'][:,:,:2])
 
 		self._reset()
 		self.history = self.model.fit(
-					[train_set['history_traj_data'][:,:,:3], train_goal], 
-					train_set['future_traj_data'][:,:,:2], 
-					epochs=num_epochs, 
-					validation_data=val_data, 
+					train_data,
+					label[:,:,:2],
+          steps_per_epoch = count // batch_size,
+					epochs=num_epochs,
+					#validation_data=val_data,
 					verbose = verbose)
-		if verbose:
-			self.plot_history()
+		#if verbose:
+		#	self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
@@ -332,7 +356,38 @@ class TrajLSTM(object):
 		print('Loaded model from %s' % file_name)
 		#return traj_model
 
-	def predict(self, test_set):
-		# TODO: how to incorporate goal prediction
-		traj_pred = self.model.predict([test_set['history_traj_data'][:,:,:3], test_set['one_hot_goal']])
+	def predict(self, test_set,prediction_type = 'gt'):
+
+		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,batch_size=1)
+		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+    # All intention labels, with shape (batch_size, goal_nums)
+		goal_idx = label[:, 0, -1]
+    # Convert to one-hot and the last one is undecided (-1)
+		test_goal = to_categorical(goal_idx, num_classes=33)
+
+		if prediction_type == 'gt':
+			test_data = [feature, test_goal]
+		else:
+			raise ValueError('Not implemented')
+      #TODO: VIJAY
+      # If don't want the goal
+  		# if top_k_goal == None or self.use_goal_info == False:
+  		# 	# Set others to be zeros while keep the argmax to be 1.
+  		# 	traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
+  		# 	traj_pred = self.traj_model.predict(traj_test_set)
+  		# 	traj_pred_dict[0] = traj_pred
+  		# # If using the ground truth goal
+  		# elif top_k_goal == []:
+  		# 	traj_pred = self.traj_model.predict(traj_test_set)
+  		# 	traj_pred_dict[0] = traj_pred
+  		# else:
+  		# 	top_idxs = np.argsort(goal_pred, axis=1)
+  		# 	for k in top_k_goal:
+  		# 		kth_idx = top_idxs[:, -1-k]
+  		# 		# Set others to be zeros while keep the argmax to be 1.
+  		# 		traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
+  		# 		for row, col in enumerate(kth_idx):
+  		# 			traj_test_set['one_hot_goal'][row, col] = 1.
+
+		traj_pred = self.model.predict(test_data, steps = count)
 		return traj_pred
