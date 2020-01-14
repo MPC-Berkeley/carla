@@ -45,14 +45,14 @@ class CombinedLSTM(object):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose, use_image=use_image)
 		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info,use_image=use_image)
 
-	def predict(self, test_set, top_k_goal=[]):
-		goal_pred = self.goal_model.predict(test_set)
+	def predict(self, test_set, top_k_goal=[],use_image=False):
+		goal_pred = self.goal_model.predict(test_set,use_image=use_image)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
 		traj_pred_dict = dict()
 
-		traj_pred = self.traj_model.predict(test_set)
+		traj_pred = self.traj_model.predict(test_set,prediction_type='gt',top_k_goal=[0,1,2],use_image=use_image)
 		traj_pred_dict[0] = traj_pred
 
 		# Get ground truth here
@@ -114,8 +114,8 @@ class GoalLSTM(object):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
 	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs):
-		
-		
+
+
 		# ---- DEFINE MODEL HERE ------
 		cnn_input  = Input(shape=(image_input_shape),name="image_history")
 		cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
@@ -167,7 +167,7 @@ class GoalLSTM(object):
 
 		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 		goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
-    
+
     # All intention labels, with shape (batch_size, goal_nums)
 		goal_idx = label[:, 0, -1]
 		goal_idx_val = label_val[:,0,-1]
@@ -235,12 +235,14 @@ class GoalLSTM(object):
 		print('Loaded model from %s' % file_name)
 		# return goal_model
 
-	def predict(self, test_set):
+	def predict(self, test_set, use_image=False):
 		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,shuffle=False,batch_size=1)
 		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 
     # Convert to one-hot and the last one is undecided (-1)
-		test_data = [feature, goal]
+		if not use_image:
+			image = tf.zeros_like(image)
+		test_data = [feature, goal, image]
 
 		goal_pred = self.model.predict(test_data, steps=count)
 
@@ -383,7 +385,7 @@ class TrajLSTM(object):
 		print('Loaded model from %s' % file_name)
 		#return traj_model
 
-	def predict(self, test_set,prediction_type = 'gt'):
+	def predict(self, test_set,prediction_type = 'gt',top_k_goal=[],use_image=False):
 
 		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,batch_size=1)
 		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
@@ -392,8 +394,11 @@ class TrajLSTM(object):
     # Convert to one-hot and the last one is undecided (-1)
 		test_goal = to_categorical(goal_idx, num_classes=33)
 
+		if not use_image:
+			image = tf.zeros_like(image)
+
 		if prediction_type == 'gt':
-			test_data = [feature, test_goal]
+			test_data = [feature, test_goal,image]
 		else:
 			raise ValueError('Not implemented')
       #TODO: VIJAY
