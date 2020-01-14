@@ -100,6 +100,11 @@ def read_tfrecord(files, cutting=False, shuffle=True, repeat=True, batch_size=64
     # Only pose (x, y, theta) returned.
     feature = feature[:,:,:3]
     
+  # image:   overhead semantic image of the parking lot
+  # feature: motion history in the prior timesteps up to current timestep
+  # label:   motion future (x,y,theta,v,w) and intention label for future timesteps
+  # goal:    occupancy information (goal_x, goal_y, goal_free)
+  # count:   number of dataset instances in the specified tfrecord files
   return image, feature, label, goal, count
 
 def read_gt_tfrecord(files):
