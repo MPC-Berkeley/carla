@@ -5,6 +5,9 @@ from utils import fix_angle
 import pickle
 import datetime
 import scipy.spatial as ssp
+import tensorflow as tf # needed to parse tfrecord
+from tfrecord_utils import _parse_function
+from keras.utils import to_categorical
 import pdb
 
 '''
@@ -65,22 +68,26 @@ class EKF_CV_MODEL(object):
 		self.dt = kf_dict['dt']
 
 	def fit(self, train_set, val_set):
-		self.Q = EKF_CV_MODEL._identify_Q_train(train_set, self.dt)
+		tset = EKF_CV_MODEL._extract_dict_from_tfrecords(train_set)
+		self.Q = EKF_CV_MODEL._identify_Q_train(tset, self.dt)
 
 		''' Debug '''
 		#np.set_printoptions(precision=2)
 		#print('Q identified as: ', self.Q)
 
 	def predict(self, test_set):
-		# sort of inverted version compared to LSTM method
-		N_pred = test_set['future_traj_data'][0].shape[0]
-		traj_pred = self.traj_prediction(test_set['history_traj_data'], N_pred) # TODO
-		goal_pred = self.goal_prediction(traj_pred, test_set['goal_position']) # TODO
+		tset = EKF_CV_MODEL._extract_dict_from_tfrecords(test_set)
 
+		# sort of inverted version compared to LSTM method
+		N_pred = tset['future_traj_data'][0].shape[0]
+		traj_pred = self.traj_prediction(tset['history_traj_data'], N_pred)
+		goal_pred = self.goal_prediction(traj_pred, tset['goal_position'])
+
+		# unimodal trajectory prediction
 		traj_pred_dict = {0: traj_pred}
-		traj_pred_dict[0] = traj_pred
-		# TODO: clean up and fix analysis
-		return goal_pred, traj_pred_dict
+
+		return goal_pred, tset['goal_ground_truth'], \
+		       traj_pred_dict, tset['future_traj_data']
 
 	def time_update(self):
 		self.x = EKF_CV_MODEL._f_cv(self.x, self.dt)
@@ -131,9 +138,8 @@ class EKF_CV_MODEL(object):
 			return traj_pred
 
 	def goal_prediction(self, x_preds, goals, max_dist_thresh=20.):
-		num_goals = int(goals.shape[1] / 3) 
+		num_goals = int(goals.shape[1]) 
 		goal_pred = np.zeros( (len(x_preds), num_goals + 1) )		
-		goals = goals.reshape(goals.shape[0], num_goals, 3)
 
 		for i, (x_pred, goal) in enumerate(zip(x_preds, goals)):
 			inds_free = np.ravel( np.argwhere(goal[:,2] > 0.) )
@@ -153,6 +159,36 @@ class EKF_CV_MODEL(object):
 			goal_pred[i, -1] = prob_keep_going
 
 		return goal_pred
+
+	@staticmethod
+	def _extract_dict_from_tfrecords(files):
+		tset = {}
+		tset['history_traj_data'] = []
+		tset['future_traj_data']  = []
+		tset['goal_position']     = []
+		tset['goal_ground_truth'] = []
+
+		# Works with TF 2.0.  Else may need an iterator.
+		dataset = tf.data.TFRecordDataset(files)
+		dataset = dataset.map(_parse_function)
+		
+		for _, feature, label, goal in dataset:
+			# Build up the data incrementally from tfrecords.
+			# We don't need the image for the EKF.
+			tset['history_traj_data'].append(feature.numpy())
+			tset['future_traj_data'].append(label.numpy()[:,:5])
+			tset['goal_position'].append(goal)
+			
+			goal_idx = label[0, -1]
+			# Convert to one-hot and the last one is undecided (-1)
+			tset['goal_ground_truth'].append(to_categorical(goal_idx, num_classes=33))
+
+		tset['history_traj_data'] = np.array(tset['history_traj_data'])
+		tset['future_traj_data']  = np.array(tset['future_traj_data'])
+		tset['goal_position']     = np.array(tset['goal_position'])
+		tset['goal_ground_truth'] = np.array(tset['goal_ground_truth']) 
+
+		return tset
 
 	@staticmethod
 	def _f_cv(x, dt):

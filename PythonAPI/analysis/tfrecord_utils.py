@@ -75,8 +75,8 @@ def _parse_function(proto):
 
     return image, feature, label, goal
 
-def read_tfrecord(files,cutting=False,shuffle=True,batch_size=64):
-
+def read_tfrecord(files, cutting=False, shuffle=True, repeat=True, batch_size=64):
+  # Inefficient way to count number of data instances in files.
   count = 0
   for f in files:
         for record in tf.compat.v1.io.tf_record_iterator(f):
@@ -85,23 +85,27 @@ def read_tfrecord(files,cutting=False,shuffle=True,batch_size=64):
   dataset = tf.data.TFRecordDataset(files)
   dataset = dataset.map(_parse_function)
 
-  dataset = dataset.repeat()
+  if repeat:
+    dataset = dataset.repeat()
   if shuffle:
     dataset = dataset.shuffle(2048)
+
   dataset = dataset.batch(batch_size)
-
   iterator = dataset.__iter__()
-
 
   image, feature, label, goal = iterator.get_next()
 
   if cutting:
+    # Remove velocity information from feature.
+    # Only pose (x, y, theta) returned.
     feature = feature[:,:,:3]
     
   return image, feature, label, goal, count
 
-
 def read_gt_tfrecord(files):
+  # This function just returns ground truth in aggregated form.
+
+  # Inefficient way to count number of data instances in files.
   count = 0
   for f in files:
         for record in tf.compat.v1.io.tf_record_iterator(f):
@@ -112,8 +116,8 @@ def read_gt_tfrecord(files):
 
   iterator = dataset.__iter__()
 
-  goal_gt =  []
-  traj_gt =  []
+  goal_gt =  [] # goal index ground truth
+  traj_gt =  [] # future trajectory ground truth
 
   for k in range(count):
     image, feature, label, goal = iterator.get_next()
