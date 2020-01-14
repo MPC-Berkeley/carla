@@ -26,6 +26,7 @@ from tfrecord_utils import read_tfrecord, read_gt_tfrecord,_parse_function
 import tensorflow as tf
 import glob
 from datetime import datetime
+import time
 
 class CombinedLSTM(object):
 	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
@@ -36,24 +37,28 @@ class CombinedLSTM(object):
 		future_horizon      = future_shape[1]
 		future_dim	        = future_shape[2]
 
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
-		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, hidden_dim=hidden_dim)
-
 		self.use_goal_info = use_goal_info
+		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
+		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
 
-	def fit(self, train_set, val_set, batch_size=64, verbose=0, use_image = False):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose, use_image=use_image)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info,use_image=use_image)
+	def fit(self, train_set, val_set, num_epochs=100, batch_size=64, verbose=0, use_image = False):
+		self.goal_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
+		                          verbose=verbose, use_image=use_image)
+		self.traj_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
+			                      verbose=verbose,use_image=use_image)
 
 	def predict(self, test_set, top_k_goal=[],use_image=False):
+		print('\t goal_prediction at ', time.time())
 		goal_pred = self.goal_model.predict(test_set,use_image=use_image)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
 		top_idxs = np.argsort(goal_pred,axis=1)
+		print('\t traj_prediction', time.time())
 		traj_pred_dict = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal,use_image=use_image)
 		
 		# Get ground truth here
+		print('\t ground_truth', time.time())
 		goal_gt, traj_gt = read_gt_tfrecord(test_set)
 
 		return goal_pred, goal_gt, traj_pred_dict, traj_gt
@@ -173,11 +178,11 @@ class GoalLSTM(object):
 		one_hot_goal_val = to_categorical(goal_idx_val, num_classes=33)
 
 		if use_image:
-			train_data = [feature, goal,image]
-			val_data = ([feature_val, goal_val,image_val], one_hot_goal_val)
-		else:
-			train_data = [feature, goal,tf.zeros_like(image)]
-			val_data = ([feature_val, goal_val,tf.zeros_like(image_val)], one_hot_goal_val)
+			image = tf.zeros_like(image)
+			image_val = tf.zeros_like(image_val)
+		
+		train_data = [feature, goal,image]
+		val_data = ([feature_val, goal_val,image_val], one_hot_goal_val)
 
 		self._reset()
 		self.history = self.model.fit(
@@ -232,7 +237,7 @@ class GoalLSTM(object):
 		# return goal_model
 
 	def predict(self, test_set, use_image=False):
-		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,shuffle=False,batch_size=1)
+		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True, repeat=False, shuffle=False,batch_size=1)
 		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 
     # Convert to one-hot and the last one is undecided (-1)
@@ -246,9 +251,9 @@ class GoalLSTM(object):
 
 class TrajLSTM(object):
 	"""docstring for TrajLSTM"""
-	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, hidden_dim=100):
+	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100):
 		self.history    = None
-
+		self.use_goal_info = use_goal_info
 		self.model = self._create_model(traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim)
 		''' Debug '''
 		# plot_model(self.model,to_file='traj_model.png')
@@ -304,7 +309,7 @@ class TrajLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0, use_goal_info=True,use_image=False):
+	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0,use_image=False):
 
 		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
 		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
@@ -319,16 +324,16 @@ class TrajLSTM(object):
 		train_goal = to_categorical(goal_idx, num_classes=33)
 		train_goal_val = to_categorical(goal_idx_val, num_classes=33)
 
-		if not use_goal_info:
+		if not self.use_goal_info:
 			train_goal = np.zeros_like(train_goal)
 			train_goal_val = np.zeros_like(train_goal_val)
 
-		if use_image:
-			train_data = [feature, train_goal,image]
-			val_data = [[feature_val, train_goal_val,image_val], label_val[:,:,:2]]
-		else:
-			train_data = [feature, train_goal,tf.zeros_like(image)]
-			val_data = [[feature_val, train_goal_val,tf.zeros_like(image_val)], label_val[:,:,:2]]
+		if not use_image:
+			image = tf.zeros_like(image)
+			image_val = tf.zeros_like(image_val)
+
+		train_data = [feature, train_goal,image]
+		val_data = [[feature_val, train_goal_val,image_val], label_val[:,:,:2]]
 
 		self._reset()
 		self.history = self.model.fit(
@@ -390,6 +395,7 @@ class TrajLSTM(object):
 
 		if not top_k_goal:
 			traj_predict_dict[0] = []
+			ind = 0
 			for image, feature, label, goal in dataset:
 				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 				# All intention labels, with shape (batch_size, goal_nums)
@@ -403,6 +409,7 @@ class TrajLSTM(object):
 				
 				test_data = [feature[:,:,:3].numpy(), test_goal,image.numpy()]
 				traj_predict_dict[0].append(self.model.predict(test_data)[0,:,:])
+				ind+=1
 			traj_predict_dict[0] = np.array(traj_predict_dict[0])
 		else:
 			for k in top_k_goal:
