@@ -7,6 +7,7 @@ dependencies:
 - python=3.6
 - numpy
 - scipy
+- unidecode
 - matplotlib
 - moviepy
 - pandas
@@ -14,9 +15,9 @@ dependencies:
 - pillow
 - autograd
 - filterpy
-#- tensorflow-gpu
-#- nltk
-#- keras
+- tensorflow-gpu>=2.0
+- nltk
+- keras
 - pydot
 - scikit-image
 - scikit-learn
@@ -29,4 +30,4 @@ dependencies:
 #- cvxopt
 #- pytorch
 #- torchvision
-#- cudatoolkit=9.0
+- cudatoolkit=10.0
