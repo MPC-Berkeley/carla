@@ -478,11 +478,11 @@ class DualControl(object):
                 elif event.button == 11:
                     return 11
 
-                elif event.button == 14:
+                elif event.button == 15:
                     self._control.reverse = False
                     self._control.gear = 1
                     self._control.manual_gear_shift = False
-                elif event.button == 15:
+                elif event.button == 14:
                     self._control.reverse = True
                     self._control.gear = -1
                     self._control.manual_gear_shift = False
