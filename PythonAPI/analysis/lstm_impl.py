@@ -22,7 +22,7 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-from tfrecord_utils import read_tfrecord, read_gt_tfrecord
+from tfrecord_utils import read_tfrecord, read_gt_tfrecord,_parse_function
 import tensorflow as tf
 import glob
 from datetime import datetime
@@ -45,16 +45,14 @@ class CombinedLSTM(object):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose, use_image=use_image)
 		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info,use_image=use_image)
 
-	def predict(self, test_set, top_k_goal=[],use_image=False):
+	def predict(self, test_set, top_k_goal=[],use_image=False,use_goal_info=True):
 		goal_pred = self.goal_model.predict(test_set,use_image=use_image)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
-		traj_pred_dict = dict()
-
-		traj_pred = self.traj_model.predict(test_set,prediction_type='gt',top_k_goal=[0,1,2],use_image=use_image)
-		traj_pred_dict[0] = traj_pred
-
+		top_idxs = np.argsort(goal_pred,axis=1)
+		traj_pred_dict = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal,use_goal_info=use_goal_info,use_image=use_image)
+		
 		# Get ground truth here
 		goal_gt, traj_gt = read_gt_tfrecord(test_set)
 
@@ -385,23 +383,84 @@ class TrajLSTM(object):
 		print('Loaded model from %s' % file_name)
 		#return traj_model
 
-	def predict(self, test_set,prediction_type = 'gt',top_k_goal=[],use_image=False):
+	def predict(self, test_set,top_idxs,top_k_goal=[],use_goal_info=True,use_image=False):
 
-		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,batch_size=1)
-		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
-    # All intention labels, with shape (batch_size, goal_nums)
-		goal_idx = label[:, 0, -1]
-    # Convert to one-hot and the last one is undecided (-1)
-		test_goal = to_categorical(goal_idx, num_classes=33)
+		dataset = tf.data.TFRecordDataset(test_set)
+		dataset = dataset.map(_parse_function)
+		dataset = dataset.batch(1)
+		traj_predict_dict = dict()
 
-		if not use_image:
-			image = tf.zeros_like(image)
-
-		if prediction_type == 'gt':
-			test_data = [feature, test_goal,image]
+		if not top_k_goal:
+			traj_predict_dict[0] = []
+			for image, feature, label, goal in dataset:
+				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+				# All intention labels, with shape (batch_size, goal_nums)
+				goal_idx = label[:, 0, -1]
+		    # Convert to one-hot and the last one is undecided (-1)
+				test_goal = to_categorical(goal_idx, num_classes=33)
+				if not use_image:
+					image = tf.zeros_like(image)
+				if not use_goal_info:
+					test_goal = np.zeros_like(test_goal)
+				
+				test_data = [feature[:,:,:3].numpy(), test_goal,image.numpy()]
+				traj_predict_dict[0].append(self.model.predict(test_data)[0,:,:])
+			traj_predict_dict[0] = np.array(traj_predict_dict[0])
 		else:
-			raise ValueError('Not implemented')
-      #TODO: VIJAY
+			for k in top_k_goal:
+				traj_predict_dict[k] = []
+				kth_idx = top_idxs[:, -1-k]
+				test_goal = np.zeros_like(top_idxs)
+				for row, col in enumerate(kth_idx):
+					test_goal[row, col] = 1
+				test_goal = np.expand_dims(test_goal,axis=0)
+				ind = 0
+				for image, feature, label, goal in dataset:
+					if not use_image:
+						image = tf.zeros_like(image)
+					test_data = [feature[:,:,:3].numpy(), test_goal[:,ind,:],image.numpy()]
+					traj_predict_dict[k].append(self.model.predict(test_data)[0,:,:])
+					ind += 1
+				traj_predict_dict[k] = np.array(traj_predict_dict[k])
+
+		return traj_predict_dict
+
+
+
+
+
+
+
+
+
+
+
+
+
+		# image, feature, label, goal, count = read_tfrecord(test_set,cutting=True,batch_size=1)
+		# goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+  #   # All intention labels, with shape (batch_size, goal_nums)
+		# goal_idx = label[:, 0, -1]
+  #   # Convert to one-hot and the last one is undecided (-1)
+		# test_goal = to_categorical(goal_idx, num_classes=33)
+
+		# traj_pred_dict = dict()
+		# if not use_image:
+		# 	image = tf.zeros_like(image)
+		# if not use_goal_info:
+		# 	test_goal = tf.zeros_like(test_goal)
+
+		# if not top_k_goal:
+		# 	test_data = [feature, test_goal,image]
+		# 	traj_pred_dict[0] = self.model.predict(test_data, steps = count)
+		# else:
+		# 	for k in top_k_goal:
+		# 		kth_idx = top_idxs[:,-1-k]
+
+
+
+
+		  #TODO: VIJAY
       # If don't want the goal
   		# if top_k_goal == None or self.use_goal_info == False:
   		# 	# Set others to be zeros while keep the argmax to be 1.
@@ -420,6 +479,6 @@ class TrajLSTM(object):
   		# 		traj_test_set['one_hot_goal'] = np.zeros_like(traj_test_set['one_hot_goal'])
   		# 		for row, col in enumerate(kth_idx):
   		# 			traj_test_set['one_hot_goal'][row, col] = 1.
-
-		traj_pred = self.model.predict(test_data, steps = count)
-		return traj_pred
+  		#self.model.predict(test_data, steps = count)
+		#traj_pred = self.model.predict(test_data, steps = count)
+		#return traj_pred
