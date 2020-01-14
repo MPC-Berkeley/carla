@@ -79,6 +79,7 @@ class EKF_CV_MODEL(object):
 		tset = EKF_CV_MODEL._extract_dict_from_tfrecords(test_set)
 
 		# sort of inverted version compared to LSTM method
+		# predict trajectory with the EKF then try to guess the goal.
 		N_pred = tset['future_traj_data'][0].shape[0]
 		traj_pred = self.traj_prediction(tset['history_traj_data'], N_pred)
 		goal_pred = self.goal_prediction(traj_pred, tset['goal_position'])
@@ -86,6 +87,8 @@ class EKF_CV_MODEL(object):
 		# unimodal trajectory prediction
 		traj_pred_dict = {0: traj_pred}
 
+		# return goal prediction, goal ground truth, 
+		#        trajectory prediction, trajectory ground truth
 		return goal_pred, tset['goal_ground_truth'], \
 		       traj_pred_dict, tset['future_traj_data']
 
@@ -162,6 +165,8 @@ class EKF_CV_MODEL(object):
 
 	@staticmethod
 	def _extract_dict_from_tfrecords(files):
+		# Given a set of tfrecord files, assembles
+		# an aggregated dictionary for easier analysis.
 		tset = {}
 		tset['history_traj_data'] = []
 		tset['future_traj_data']  = []
