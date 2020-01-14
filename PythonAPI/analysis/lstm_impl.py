@@ -45,13 +45,13 @@ class CombinedLSTM(object):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size, verbose=verbose, use_image=use_image)
 		self.traj_model.fit_model(train_set, val_set, num_epochs=100, batch_size=batch_size,verbose=verbose, use_goal_info=self.use_goal_info,use_image=use_image)
 
-	def predict(self, test_set, top_k_goal=[],use_image=False,use_goal_info=True):
+	def predict(self, test_set, top_k_goal=[],use_image=False):
 		goal_pred = self.goal_model.predict(test_set,use_image=use_image)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
 		top_idxs = np.argsort(goal_pred,axis=1)
-		traj_pred_dict = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal,use_goal_info=use_goal_info,use_image=use_image)
+		traj_pred_dict = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal,use_image=use_image)
 		
 		# Get ground truth here
 		goal_gt, traj_gt = read_gt_tfrecord(test_set)
@@ -123,11 +123,9 @@ class GoalLSTM(object):
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
-		print(lstm_input)
-
+		
 		lstm_cnn_inp = concatenate([lstm_input,cnn_out])
-		print('Lstm cnn',lstm_cnn_inp)
-
+		
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
@@ -383,7 +381,7 @@ class TrajLSTM(object):
 		print('Loaded model from %s' % file_name)
 		#return traj_model
 
-	def predict(self, test_set,top_idxs,top_k_goal=[],use_goal_info=True,use_image=False):
+	def predict(self, test_set,top_idxs,top_k_goal=[],use_image=False):
 
 		dataset = tf.data.TFRecordDataset(test_set)
 		dataset = dataset.map(_parse_function)
@@ -400,7 +398,7 @@ class TrajLSTM(object):
 				test_goal = to_categorical(goal_idx, num_classes=33)
 				if not use_image:
 					image = tf.zeros_like(image)
-				if not use_goal_info:
+				if not self.use_goal_info:
 					test_goal = np.zeros_like(test_goal)
 				
 				test_data = [feature[:,:,:3].numpy(), test_goal,image.numpy()]
