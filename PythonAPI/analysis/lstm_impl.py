@@ -26,6 +26,7 @@ from tfrecord_utils import read_tfrecord, read_gt_tfrecord,_parse_function
 import tensorflow as tf
 import glob
 from datetime import datetime
+from tqdm import tqdm
 import time
 
 class CombinedLSTM(object):
@@ -42,24 +43,26 @@ class CombinedLSTM(object):
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
 
 	def fit(self, train_set, val_set, num_epochs=100, batch_size=64, verbose=0, use_image = False):
+		print('Fitting GoalLSTM')
 		self.goal_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
 		                          verbose=verbose, use_image=use_image)
+		print('Fitting TrajLSTM')
 		self.traj_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
 			                      verbose=verbose,use_image=use_image)
 
 	def predict(self, test_set, top_k_goal=[],use_image=False):
 		print('\t goal_prediction at ', time.time())
-		goal_pred = self.goal_model.predict(test_set,use_image=use_image)
+		goal_pred, goal_gt = self.goal_model.predict(test_set,use_image=use_image)
 
 		# TODO: how to cleanly do multimodal predictions here.  Maybe we can't cleanly just pass a test set, or need to add
 		# a new field to the dictionary with top k goal predictions and loop in the predict function.
 		top_idxs = np.argsort(goal_pred,axis=1)
 		print('\t traj_prediction', time.time())
-		traj_pred_dict = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal,use_image=use_image)
+		traj_pred_dict, traj_gt = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal,use_image=use_image)
 		
 		# Get ground truth here
-		print('\t ground_truth', time.time())
-		goal_gt, traj_gt = read_gt_tfrecord(test_set)
+		#print('\t ground_truth', time.time())
+		#goal_gt, traj_gt = read_gt_tfrecord(test_set)
 
 		return goal_pred, goal_gt, traj_pred_dict, traj_gt
 
@@ -121,21 +124,21 @@ class GoalLSTM(object):
 
 		# ---- DEFINE MODEL HERE ------
 		cnn_input  = Input(shape=(image_input_shape),name="image_history")
-		cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
-		fl = TimeDistributed(Flatten())(cnn_layer)
-		cnn_out = TimeDistributed(Dense(10))(fl)
+		#cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
+		#fl = TimeDistributed(Flatten())(cnn_layer)
+		#cnn_out = TimeDistributed(Dense(10))(fl)
 		# -----------------------------
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="input_trajectory")
 		
-		lstm_cnn_inp = concatenate([lstm_input,cnn_out])
+		#lstm_cnn_inp = concatenate([lstm_input,cnn_out])
 		
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
 		# LSTM outputs
-		lstm_outputs, state_h, state_c = lstm(lstm_cnn_inp)
+		lstm_outputs, state_h, state_c = lstm(lstm_input)
 
 		# Input for goals
 		goals_input = Input(shape=(goal_input_shape),name="goal_input")
@@ -163,38 +166,77 @@ class GoalLSTM(object):
 		self.model.set_weights(self.init_weights)
 
 	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64,verbose=0,use_image=False):
-		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
-		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
 
-		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
-		goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
-
-    # All intention labels, with shape (batch_size, goal_nums)
-		goal_idx = label[:, 0, -1]
-		goal_idx_val = label_val[:,0,-1]
-
-    # Convert to one-hot and the last one is undecided (-1)
-		one_hot_goal = to_categorical(goal_idx, num_classes=33)
-		one_hot_goal_val = to_categorical(goal_idx_val, num_classes=33)
-
-		if use_image:
-			image = tf.zeros_like(image)
-			image_val = tf.zeros_like(image_val)
-		
-		train_data = [feature, goal,image]
-		val_data = ([feature_val, goal_val,image_val], one_hot_goal_val)
-
+		dataset = tf.data.TFRecordDataset(train_set)
+		dataset = dataset.map(_parse_function)
+		dataset = dataset.batch(batch_size)
 		self._reset()
-		self.history = self.model.fit(
-					train_data,
-          one_hot_goal,
-          steps_per_epoch=count // batch_size,
-					epochs=num_epochs,
-					validation_data=val_data,
-					validation_steps = count_val // batch_size,
-					verbose=verbose)
-		if verbose:
-			self.plot_history()
+
+		for epoch in tqdm(range(num_epochs)):
+			for image, feature, label, goal in dataset:
+				feature = feature[:,:,:3]
+
+				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+				#goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
+
+		    # All intention labels, with shape (batch_size, goal_nums)
+				goal_idx = label[:, 0, -1]
+				#goal_idx_val = label_val[:,0,-1]
+
+		    # Convert to one-hot and the last one is undecided (-1)
+				one_hot_goal = to_categorical(goal_idx, num_classes=33)
+				#one_hot_goal_val = to_categorical(goal_idx_val, num_classes=33)
+
+				if use_image:
+					image = tf.zeros_like(image)
+					#image_val = tf.zeros_like(image_val)
+				
+				train_data = [feature, goal,image]
+				#val_data = ([feature_val, goal_val,image_val], one_hot_goal_val)
+
+				self.model.fit(
+						train_data,
+	          one_hot_goal,
+	          steps_per_epoch = 1,
+						epochs=1,
+						#validation_data=val_data,
+						#validation_steps = count_val // batch_size,
+						verbose=verbose)
+
+
+
+		# image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
+		# image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
+
+		# goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+		# goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
+
+  #   # All intention labels, with shape (batch_size, goal_nums)
+		# goal_idx = label[:, 0, -1]
+		# goal_idx_val = label_val[:,0,-1]
+
+  #   # Convert to one-hot and the last one is undecided (-1)
+		# one_hot_goal = to_categorical(goal_idx, num_classes=33)
+		# one_hot_goal_val = to_categorical(goal_idx_val, num_classes=33)
+
+		# if use_image:
+		# 	image = tf.zeros_like(image)
+		# 	image_val = tf.zeros_like(image_val)
+		
+		# train_data = [feature, goal,image]
+		# val_data = ([feature_val, goal_val,image_val], one_hot_goal_val)
+
+		# self._reset()
+		# self.history = self.model.fit(
+		# 			train_data,
+  #         one_hot_goal,
+  #         steps_per_epoch=count // batch_size,
+		# 			epochs=num_epochs,
+		# 			validation_data=val_data,
+		# 			validation_steps = count_val // batch_size,
+		# 			verbose=verbose)
+		# if verbose:
+		# 	self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
@@ -236,18 +278,45 @@ class GoalLSTM(object):
 		print('Loaded model from %s' % file_name)
 		# return goal_model
 
-	def predict(self, test_set, use_image=False):
-		image, feature, label, goal, count = read_tfrecord(test_set,cutting=True, repeat=False, shuffle=False,batch_size=1)
-		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+	def predict(self, test_set, batch_size=64,use_image=False):
+		
+
+		dataset = tf.data.TFRecordDataset(test_set)
+		dataset = dataset.map(_parse_function)
+		dataset = dataset.batch(batch_size)
+
+		goal_pred = None
+		goal_gt =  None # goal index ground truth
+
+		for image, feature, label, goal in dataset:
+			feature = feature[:,:,:3]
+
+			goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+			if not use_image:
+				image = tf.zeros_like(image)
+			test_data = [feature, goal, image]
+
+
+			goal_idx = label[:,0, -1]
+    	
+			if goal_pred is None:
+				goal_pred = self.model.predict(test_data,steps = 1)
+				goal_gt = to_categorical(goal_idx, num_classes=33)
+			else:
+				goal_pred = np.concatenate((goal_pred,self.model.predict(test_data,steps=1)),axis=0)
+				goal_gt = np.concatenate((goal_gt,to_categorical(goal_idx, num_classes=33)),axis=0)
+
+
+		#image, feature, label, goal, count = read_tfrecord(test_set,cutting=True, repeat=False, shuffle=False,batch_size=1)
+		#goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 
     # Convert to one-hot and the last one is undecided (-1)
-		if not use_image:
-			image = tf.zeros_like(image)
-		test_data = [feature, goal, image]
+		#if not use_image:
+		#	image = tf.zeros_like(image)
+		#test_data = [feature, goal, image]
 
-		goal_pred = self.model.predict(test_data, steps=count)
-
-		return goal_pred
+		#goal_pred = self.model.predict(test_data, steps=count)
+		return goal_pred, goal_gt
 
 class TrajLSTM(object):
 	"""docstring for TrajLSTM"""
@@ -264,21 +333,21 @@ class TrajLSTM(object):
 
 		# ---- DEFINE MODEL HERE ------
 		cnn_input  = Input(shape=(image_input_shape),name="image_history")
-		cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
-		fl = TimeDistributed(Flatten())(cnn_layer)
-		cnn_out = TimeDistributed(Dense(10))(fl)
+		#cnn_layer = TimeDistributed(Conv2D(32, kernel_size=(3,3),activation='relu'))(cnn_input)
+		#fl = TimeDistributed(Flatten())(cnn_layer)
+		#cnn_out = TimeDistributed(Dense(10))(fl)
 		# -----------------------------
 
 		# Input to lstm
 		lstm_input = Input(shape=(traj_input_shape),name="trajectory_input")
 
-		lstm_cnn_input = concatenate([lstm_input,cnn_out])
+		#lstm_cnn_input = concatenate([lstm_input,cnn_out])
 
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
 		# LSTM outputs
-		lstm_outputs, state_h, state_c = lstm(lstm_cnn_input)
+		lstm_outputs, state_h, state_c = lstm(lstm_input)
 		encoder_states = [state_h,state_c]
 
 		# Input for goals
@@ -311,41 +380,69 @@ class TrajLSTM(object):
 
 	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0,use_image=False):
 
-		image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
-		image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
-
-		goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
-		goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
-
-    # All intention labels, with shape (batch_size, goal_nums)
-		goal_idx = label[:, 0, -1]
-		goal_idx_val = label_val[:, 0, -1]
-    # Convert to one-hot and the last one is undecided (-1)
-		train_goal = to_categorical(goal_idx, num_classes=33)
-		train_goal_val = to_categorical(goal_idx_val, num_classes=33)
-
-		if not self.use_goal_info:
-			train_goal = np.zeros_like(train_goal)
-			train_goal_val = np.zeros_like(train_goal_val)
-
-		if not use_image:
-			image = tf.zeros_like(image)
-			image_val = tf.zeros_like(image_val)
-
-		train_data = [feature, train_goal,image]
-		val_data = [[feature_val, train_goal_val,image_val], label_val[:,:,:2]]
-
+		dataset = tf.data.TFRecordDataset(train_set)
+		dataset = dataset.map(_parse_function)
+		dataset = dataset.batch(batch_size)
 		self._reset()
-		self.history = self.model.fit(
+
+		for epoch in tqdm(range(num_epochs)):
+			for image, feature, label, goal in dataset:
+				feature = feature[:,:,:3]
+
+				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+				goal_idx = label[:, 0, -1]
+				train_goal = to_categorical(goal_idx, num_classes=33)
+				if not self.use_goal_info:
+					train_goal = np.zeros_like(train_goal)
+				if not use_image:
+					image = tf.zeros_like(image)
+
+				train_data = [feature, train_goal,image]
+
+				self.model.fit(
 					train_data,
 					label[:,:,:2],
-          steps_per_epoch = count // batch_size,
-					epochs=num_epochs,
-					validation_data=val_data,
-					validation_steps = count_val // batch_size,
+          steps_per_epoch = 1,
+					epochs = 1,
+					#validation_data=val_data,
+					#validation_steps = count_val // batch_size,
 					verbose = verbose)
-		if verbose:
-			self.plot_history()
+
+		# image, feature, label, goal, count = read_tfrecord(train_set,cutting=True,batch_size=batch_size)
+		# image_val, feature_val, label_val, goal_val, count_val = read_tfrecord(val_set,cutting=True,batch_size=batch_size)
+
+		# goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+		# goal_val = tf.reshape(goal_val,(-1,goal_val.shape[1]*goal_val.shape[2]))
+
+  #   # All intention labels, with shape (batch_size, goal_nums)
+		# goal_idx = label[:, 0, -1]
+		# goal_idx_val = label_val[:, 0, -1]
+  #   # Convert to one-hot and the last one is undecided (-1)
+		# train_goal = to_categorical(goal_idx, num_classes=33)
+		# train_goal_val = to_categorical(goal_idx_val, num_classes=33)
+
+		# if not self.use_goal_info:
+		# 	train_goal = np.zeros_like(train_goal)
+		# 	train_goal_val = np.zeros_like(train_goal_val)
+
+		# if not use_image:
+		# 	image = tf.zeros_like(image)
+		# 	image_val = tf.zeros_like(image_val)
+
+		# train_data = [feature, train_goal,image]
+		# val_data = [[feature_val, train_goal_val,image_val], label_val[:,:,:2]]
+
+		# self._reset()
+		# self.history = self.model.fit(
+		# 			train_data,
+		# 			label[:,:,:2],
+  #         steps_per_epoch = count // batch_size,
+		# 			epochs=num_epochs,
+		# 			validation_data=val_data,
+		# 			validation_steps = count_val // batch_size,
+		# 			verbose = verbose)
+		# if verbose:
+		# 	self.plot_history()
 
 	def plot_history(self):
 		if not self.history:
@@ -392,14 +489,17 @@ class TrajLSTM(object):
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.batch(1)
 		traj_predict_dict = dict()
-
+		traj_gt = []
 		if not top_k_goal:
 			traj_predict_dict[0] = []
 			ind = 0
+
+		#  for epoch in n_epochs: 
 			for image, feature, label, goal in dataset:
 				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 				# All intention labels, with shape (batch_size, goal_nums)
 				goal_idx = label[:, 0, -1]
+				traj_gt.append(label[0,:,:-1])
 		    # Convert to one-hot and the last one is undecided (-1)
 				test_goal = to_categorical(goal_idx, num_classes=33)
 				if not use_image:
@@ -412,7 +512,7 @@ class TrajLSTM(object):
 				ind+=1
 			traj_predict_dict[0] = np.array(traj_predict_dict[0])
 		else:
-			for k in top_k_goal:
+			for k_ind, k in enumerate(top_k_goal):
 				traj_predict_dict[k] = []
 				kth_idx = top_idxs[:, -1-k]
 				test_goal = np.zeros_like(top_idxs)
@@ -425,10 +525,12 @@ class TrajLSTM(object):
 						image = tf.zeros_like(image)
 					test_data = [feature[:,:,:3].numpy(), test_goal[:,ind,:],image.numpy()]
 					traj_predict_dict[k].append(self.model.predict(test_data)[0,:,:])
+					if k_ind == 0:
+						traj_gt.append(label[0,:,:-1])
 					ind += 1
 				traj_predict_dict[k] = np.array(traj_predict_dict[k])
 
-		return traj_predict_dict
+		return traj_predict_dict, np.array(traj_gt)
 
 
 
