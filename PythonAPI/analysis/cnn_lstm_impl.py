@@ -359,7 +359,7 @@ class TrajCNNLSTM(object):
 
 				test_data = [feature[:,:,:3], one_hot_goal, image]
 				
-				traj_predict_dict[0].append(self.model.predict(test_data)[0,:,:])
+				traj_predict_dict[0].append(self.model.predict(test_data, steps=1)[0,:,:])
 
 			traj_predict_dict[0] = np.array(traj_predict_dict[0])
 		
@@ -384,7 +384,7 @@ class TrajCNNLSTM(object):
 
 					test_data = [feature[:,:,:3], one_hot_goals[:,instance_ind,:], image]
 					
-					traj_predict_dict[k].append(self.model.predict(test_data)[0,:,:])
+					traj_predict_dict[k].append(self.model.predict(test_data, steps=1)[0,:,:])
 										
 					instance_ind += 1
 				
