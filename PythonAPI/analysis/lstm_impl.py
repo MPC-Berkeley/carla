@@ -152,7 +152,7 @@ class GoalLSTM(object):
 			    # Convert to one-hot and the last one is undecided (-1)
 				one_hot_goal = to_categorical(goal_idx, num_classes=33) # ground truth goal label
 		
-				train_data = [feature.numpy(), goal.numpy()]
+				train_data = [feature, goal]
 
 				self.model.train_on_batch(
 					      train_data,
@@ -183,7 +183,7 @@ class GoalLSTM(object):
 
 			goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 			
-			test_data = [feature.numpy(), goal.numpy()]
+			test_data = [feature, goal]
 
 			goal_idx = label[:,0, -1]
     	
@@ -265,11 +265,11 @@ class TrajLSTM(object):
 				if not self.use_goal_info:
 					one_hot_goal = np.zeros_like(one_hot_goal)
 
-				train_data = [feature.numpy(), one_hot_goal]
+				train_data = [feature, one_hot_goal]
 
 				self.model.train_on_batch(
 					train_data,
-					label[:,:,:2].numpy()
+					label[:,:,:2]
 					)
 
 	def save_model(self, file_name):
@@ -304,8 +304,8 @@ class TrajLSTM(object):
 				if not self.use_goal_info:
 					one_hot_goal = np.zeros_like(one_hot_goal)
 
-				test_data = [feature[:,:,:3].numpy(), one_hot_goal]
-				traj_predict_dict[0].append(self.model.predict(test_data)[0,:,:])
+				test_data = [feature[:,:,:3], one_hot_goal]
+				traj_predict_dict[0].append(self.model.predict(test_data, steps=1)[0,:,:])
 
 			traj_predict_dict[0] = np.array(traj_predict_dict[0])
 		
@@ -325,8 +325,8 @@ class TrajLSTM(object):
 					if k_ind == 0:		
 						traj_gt.append(label[0,:,:-1].numpy())
 
-					test_data = [feature[:,:,:3].numpy(), one_hot_goals[:,instance_ind,:]]
-					traj_predict_dict[k].append(self.model.predict(test_data)[0,:,:])
+					test_data = [feature[:,:,:3], one_hot_goals[:,instance_ind,:]]
+					traj_predict_dict[k].append(self.model.predict(test_data, steps=1)[0,:,:])
 										
 					instance_ind += 1
 				
