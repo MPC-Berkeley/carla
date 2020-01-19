@@ -9,13 +9,14 @@ from keras import metrics
 from keras import Input, Model
 from keras.models import Sequential
 from keras.models import load_model
-from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate, Conv2D
+from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate, Conv2D, MaxPooling2D
 from keras.layers import Activation, TimeDistributed, RepeatVector, Embedding
 from keras.layers.recurrent import LSTM
 from keras.callbacks import EarlyStopping
 from keras.utils import plot_model
 from keras.utils import to_categorical
 from keras.preprocessing.sequence import pad_sequences
+import keras.applications.mobilenet_v2 as mbnet
 import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
@@ -28,8 +29,19 @@ from tqdm import tqdm
 import time
 import pdb
 
-class CombinedLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
+def cnn_base_network(input_shape, img_feature_dim=10):
+	cnn_model = Sequential()
+	cnn_model.add( Conv2D(16, kernel_size=(8,8), strides=4, activation='relu', input_shape=input_shape) )
+	cnn_model.add( MaxPooling2D(pool_size=(2,2)) )
+	cnn_model.add( Conv2D(32, kernel_size=(4,4), strides=2, activation='relu') )
+	cnn_model.add( MaxPooling2D(pool_size=(2,2)) )
+	cnn_model.add( Flatten() )
+	cnn_model.add( Dense(128) )
+	cnn_model.add( Dense(img_feature_dim) )
+	return cnn_model
+
+class CombinedCNNLSTM(object):
+	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -38,8 +50,8 @@ class CombinedLSTM(object):
 		future_dim	        = future_shape[2]
 
 		self.use_goal_info = use_goal_info
-		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
-		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
+		self.goal_model = GoalCNNLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
+		self.traj_model = TrajCNNLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
 
 	def fit(self, train_set, val_set, num_epochs=100, batch_size=64, verbose=0):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
@@ -56,28 +68,28 @@ class CombinedLSTM(object):
 
 	def save(self, filename):
 		try:
-			self.goal_model.model.save_weights('%s_goalw.h5' % filename)
-			self.traj_model.model.save_weights('%s_trajw.h5' % filename)
+			self.goal_model.model.save_weights('%s_goalcnnw.h5' % filename)
+			self.traj_model.model.save_weights('%s_trajcnnw.h5' % filename)
 		except Exception as e:
 			print(e)
 
 	def load(self, filename):
 		try:
-			self.goal_model.model.load_weights('%s_goalw.h5' % filename)
-			self.traj_model.model.load_weights('%s_trajw.h5' % filename)
+			self.goal_model.model.load_weights('%s_goalcnnw.h5' % filename)
+			self.traj_model.model.load_weights('%s_trajcnnw.h5' % filename)
 		except Exception as e:
 			print(e)
 
-class GoalLSTM(object):
-	"""This LSTM predicts the goal given trajectory and occupancy inputs."""
-	def __init__(self, traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=100):
+class GoalCNNLSTM(object):
+	"""This LSTM predicts the goal given trajectory/image inputs."""
+	def __init__(self, traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100):
 		self.beta       = beta   # hyperparameter for maximum entropy
 		self.gamma      = gamma  # hyperparameter for penalty for predicting occupied spots
-		self.model  = self._create_model(traj_input_shape, goal_input_shape, hidden_dim, n_outputs)
+		self.model  = self._create_model(traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs)
 		self.trained = False
 
 		''' Debug '''
-		#plot_model(self.model, to_file='goal_model.png')
+		#plot_model(self.model, to_file='goal_model.png', show_shapes=True)
 		#print(self.model.summary())
 
 	def goal_loss(self, occupancy):
@@ -99,18 +111,35 @@ class GoalLSTM(object):
 	def top_k_acc(self, y_true, y_pred, k=3):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
-	def _create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
+	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs, img_feature_dim=10):
 		# Input for previous trajectory information.
 		traj_hist_input = Input(shape=(traj_input_shape),name="input_trajectory")
 
 		# Input for goals (occupancy).
 		goals_input = Input(shape=(goal_input_shape),name="goal_input")
 
+		# Image input.
+		img_hist_input  = Input(shape=(image_input_shape),name="image_history")
+
+		# ---- CNN/LSTM in progress ------
+		# cnn_base = mbnet.MobileNetV2(input_shape=image_input_shape[1:],
+		# 	                         alpha=0.5,
+		# 	                         include_top=False,
+		# 	                         weights='imagenet',
+		# 	                         pooling='max')
+		# for layer in cnn_base.layers:
+		# 	layer.trainable=False
+
+		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim=10)
+		img_hist_features = TimeDistributed(cnn_base)(img_hist_input)
+		lstm_cnn_inp = concatenate([traj_hist_input,img_hist_features])
+		# -----------------------------
+		
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
 		# LSTM outputs
-		lstm_outputs, state_h, state_c = lstm(traj_hist_input)
+		lstm_outputs, state_h, state_c = lstm(lstm_cnn_inp)
 
 		# Merge inputs with LSTM features
 		concat_input = concatenate([goals_input, lstm_outputs],name="stacked_input")
@@ -121,8 +150,8 @@ class GoalLSTM(object):
 		goal_pred_output = Dense(n_outputs,activation="softmax",name="goal_output")(concat_output)
 
 		# Create final model
-		model = Model([traj_hist_input, goals_input], goal_pred_output)
-
+		model = Model([traj_hist_input, goals_input, img_hist_input], goal_pred_output)
+		
 		# Compile model using loss
 		model.compile(loss=self.goal_loss(goals_input), optimizer='adam', metrics=[self.top_k_acc])
 		self.init_weights = model.get_weights()
@@ -132,7 +161,7 @@ class GoalLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64, verbose=0,):
+	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64, verbose=0):
 		self._reset()
 		dataset = tf.data.TFRecordDataset(train_set)
 		dataset = dataset.map(_parse_function)
@@ -141,7 +170,8 @@ class GoalLSTM(object):
 		dataset = dataset.prefetch(2)	
 
 		for epoch in range(num_epochs):
-			for _, feature, label, goal in dataset:
+			#t0 = time.time()
+			for image, feature, label, goal in dataset:
 				feature = feature[:,:,:3]
 
 				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2])) # occupancy
@@ -152,11 +182,12 @@ class GoalLSTM(object):
 			    # Convert to one-hot and the last one is undecided (-1)
 				one_hot_goal = to_categorical(goal_idx, num_classes=33) # ground truth goal label
 		
-				train_data = [feature.numpy(), goal.numpy()]
+				train_data = [feature, goal, image]
 
 				self.model.train_on_batch(
 					      train_data,
 					      one_hot_goal)
+			#print('CNN goal ',time.time()-t0)
 
 		self.trained = True
 
@@ -178,13 +209,13 @@ class GoalLSTM(object):
 		goal_pred = None
 		goal_gt =  None # goal index ground truth
 
-		for _, feature, label, goal in dataset:
+		for image, feature, label, goal in dataset:
 			feature = feature[:,:,:3]
 
 			goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
+	
+			test_data = [feature, goal, image]
 			
-			test_data = [feature.numpy(), goal.numpy()]
-
 			goal_idx = label[:,0, -1]
     	
 			if goal_pred is None:
@@ -196,18 +227,18 @@ class GoalLSTM(object):
 
 		return goal_pred, goal_gt
 
-class TrajLSTM(object):
+class TrajCNNLSTM(object):
 	"""This LSTM generates trajectory predictions condioned on a goal location."""
-	def __init__(self, traj_input_shape, intent_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100):
+	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100):
 		self.trained = False
 		self.use_goal_info = use_goal_info
-		self.model = self._create_model(traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim)
+		self.model = self._create_model(traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim)
 		
 		''' Debug '''
-		# plot_model(self.model,to_file='traj_model.png')
-		# print(self.model.summary())
+		#plot_model(self.model,to_file='traj_model.png', show_shapes=True)
+		#print(self.model.summary())
 
-	def _create_model(self, traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim):
+	def _create_model(self, traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim, img_feature_dim=10):
 		# Input for previous trajectory information.
 		traj_hist_input = Input(shape=(traj_input_shape),name="trajectory_input")
 
@@ -215,11 +246,30 @@ class TrajLSTM(object):
 		# This can be ground_truth (gt) or predicted (multimodal top-k).
 		intent_input = Input(shape=(intent_input_shape),name="intent_input")
 
+		# Image input.
+		img_hist_input  = Input(shape=(image_input_shape),name="image_history")
+
+		# ---- CNN/LSTM in progress ------
+		# cnn_base = mbnet.MobileNetV2(input_shape=image_input_shape[1:],
+		# 	                         alpha=0.5,
+		# 	                         include_top=False,
+		# 	                         weights='imagenet',
+		# 	                         pooling='max')
+		# for layer in cnn_base.layers:
+		# 	layer.trainable=False
+		
+		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim=10)
+		# plot_model(cnn_base, to_file='cnn_base_model.png', show_shapes=True)
+
+		img_hist_features = TimeDistributed(cnn_base)(img_hist_input)
+		lstm_cnn_inp = concatenate([traj_hist_input,img_hist_features])
+		# -----------------------------
+
 		# LSTM unit
 		lstm = LSTM(hidden_dim,return_state=True,name="lstm_unit")
 
 		# LSTM outputs
-		lstm_outputs, state_h, state_c = lstm(traj_hist_input)
+		lstm_outputs, state_h, state_c = lstm(lstm_cnn_inp)
 		encoder_states = [state_h,state_c]
 
 		# Repeat the intent inputs
@@ -235,7 +285,7 @@ class TrajLSTM(object):
 		decoder_fully_connected = TimeDistributed(Dense(future_dim))(decoder_outputs)
 
 		# Create final model
-		model = Model([traj_hist_input,intent_input], decoder_fully_connected)
+		model = Model([traj_hist_input,intent_input,img_hist_input], decoder_fully_connected)
 
 		# Compile model using loss
 		model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
@@ -252,11 +302,12 @@ class TrajLSTM(object):
 		dataset = tf.data.TFRecordDataset(train_set)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
-		dataset = dataset.batch(batch_size)
-		dataset = dataset.prefetch(2)		
+		dataset = dataset.batch(batch_size)		
+		dataset = dataset.prefetch(2)
 
 		for epoch in range(num_epochs):
-			for _, feature, label, goal in dataset:
+			#t0 = time.time()
+			for image, feature, label, goal in dataset:
 				feature = feature[:,:,:3]
 				
 				goal_idx = label[:, 0, -1]
@@ -265,12 +316,14 @@ class TrajLSTM(object):
 				if not self.use_goal_info:
 					one_hot_goal = np.zeros_like(one_hot_goal)
 
-				train_data = [feature.numpy(), one_hot_goal]
-
+				train_data = [feature,one_hot_goal,image]
+				
 				self.model.train_on_batch(
 					train_data,
-					label[:,:,:2].numpy()
+					label[:,:,:2]
 					)
+			#print('CNN traj ',time.time()-t0)
+
 
 	def save_model(self, file_name):
 		if not self.trained:
@@ -294,7 +347,7 @@ class TrajLSTM(object):
 			# Just use the ground truth intent (or zeroed intent) for prediction.
 			traj_predict_dict[0] = []
 
-			for _, feature, label, goal in dataset:
+			for image, feature, label, goal in dataset:
 				traj_gt.append(label[0,:,:-1].numpy())
 
 				# Convert to one-hot and the last one is undecided (-1)
@@ -304,7 +357,8 @@ class TrajLSTM(object):
 				if not self.use_goal_info:
 					one_hot_goal = np.zeros_like(one_hot_goal)
 
-				test_data = [feature[:,:,:3].numpy(), one_hot_goal]
+				test_data = [feature[:,:,:3], one_hot_goal, image]
+				
 				traj_predict_dict[0].append(self.model.predict(test_data)[0,:,:])
 
 			traj_predict_dict[0] = np.array(traj_predict_dict[0])
@@ -321,11 +375,15 @@ class TrajLSTM(object):
 				one_hot_goals = np.expand_dims(one_hot_goals,axis=0)
 				
 				instance_ind = 0
-				for _, feature, label, goal in dataset:
+				for image, feature, label, goal in dataset:
 					if k_ind == 0:		
 						traj_gt.append(label[0,:,:-1].numpy())
 
-					test_data = [feature[:,:,:3].numpy(), one_hot_goals[:,instance_ind,:]]
+					# if not use_image:
+					# 	image = tf.zeros_like(image)
+
+					test_data = [feature[:,:,:3], one_hot_goals[:,instance_ind,:], image]
+					
 					traj_predict_dict[k].append(self.model.predict(test_data)[0,:,:])
 										
 					instance_ind += 1
@@ -333,3 +391,30 @@ class TrajLSTM(object):
 				traj_predict_dict[k] = np.array(traj_predict_dict[k])
 
 		return traj_predict_dict, np.array(traj_gt)
+
+
+# Testing
+if __name__ == '__main__':
+
+	import os
+	os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+	os.environ["CUDA_VISIBLE_DEVICES"]= "3"
+
+	traj_input_shape    = (5,3)
+	goal_input_shape    = (96,)
+	n_outputs           = 33
+	intent_input_shape  = (33,)
+	future_horizon      = 20
+	future_dim	        = 2
+	image_input_shape = (5,325,100,3)
+
+	beta = 1.0
+	gamma = 1.0
+	
+	goalcnnlstm_test = GoalCNNLSTM(
+	traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100)
+
+	trajcnnlstm_test = TrajCNNLSTM(
+	traj_input_shape, intent_input_shape,  image_input_shape, future_horizon, future_dim)
+
+
