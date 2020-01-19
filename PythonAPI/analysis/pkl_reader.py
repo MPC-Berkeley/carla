@@ -2,6 +2,8 @@ import numpy as np
 import scipy.io as sio
 from utils import fix_angle
 
+import pdb
+
 # Function to get all possible goals, along with occupancy.
 # Each goal is an array [x,y,free].
 def extract_goals(res_dict):
@@ -98,7 +100,7 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     min_vel_thresh: minimum velocity (m/s) above which vehicle is moving
     exclude_collisions: Raises a 
     '''
-    # Extract intention signal time (first button press) 
+    # Extract intention signal time (first button press)
     intention_time = res_dict['intention_time_list'][0]
 
     # See if there were any collisions and return error if exclude_collisions is True.
@@ -154,6 +156,7 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
         ego_yawrate.append(entry['angular_velocity'][2])
         # TODO: Could add ego_ctrl_hist for acceleration, although it's noisy. 
 
+#     pdb.set_trace()
     inds_moving = [ n for n,ev in enumerate(ego_v) if np.abs(ev) > min_vel_thresh]
     start_ind = inds_moving[0] if prune_start else 0
     end_ind = inds_moving[-1] if prune_end else len(ego_time)-1
@@ -161,6 +164,8 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     # Goal selection
     final_position = np.array([ ego_x[end_ind], ego_y[end_ind] ])
     goal_ind = np.argmin( np.sum(np.square(goals[:,:2] - final_position), axis=1) )
+
+    # pdb.set_trace()
 
     ego_intent = [-1 if t < intention_time else goal_ind for t in ego_time]
     switch_ind = [n for n,intent in enumerate(ego_intent) if intent > -1][0]
@@ -203,8 +208,10 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
         features.append(feature)
         labels.append(label)
         goal_snpts.append(goals.copy())
-        
+    
+
     goal_snpts = np.array(goal_snpts)
+
     # Transform all snippets into ego frame, if ego_frame=True
     # TODO: check if transform is done correctly.
     if ego_frame:
