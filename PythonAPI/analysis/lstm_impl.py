@@ -5,7 +5,7 @@ from IPython import get_ipython;
 import matplotlib.pyplot as plt
 import pandas
 import math
-from keras import metrics
+from keras import metrics, optimizers
 from keras import Input, Model
 from keras.models import Sequential
 from keras.models import load_model
@@ -123,8 +123,10 @@ class GoalLSTM(object):
 		# Create final model
 		model = Model([traj_hist_input, goals_input], goal_pred_output)
 
-		# Compile model using loss
-		model.compile(loss=self.goal_loss(goals_input), optimizer='adam', metrics=[self.top_k_acc])
+		# Compile model using loss		
+		model.compile(loss=self.goal_loss(goals_input), 
+			optimizer=optimizers.Adam(clipnorm=10), metrics=[self.top_k_acc])
+			# optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=10.)
 		self.init_weights = model.get_weights()
 
 		return model
@@ -141,6 +143,7 @@ class GoalLSTM(object):
 		dataset = dataset.prefetch(2)	
 
 		for epoch in range(num_epochs):
+			losses = []
 			for _, feature, label, goal in dataset:
 				feature = feature[:,:,:3]
 
@@ -154,9 +157,13 @@ class GoalLSTM(object):
 		
 				train_data = [feature, goal]
 
-				self.model.train_on_batch(
+				batch_loss = self.model.train_on_batch(
 					      train_data,
-					      one_hot_goal)
+					      one_hot_goal,
+					      reset_metrics=True)
+				losses.append(batch_loss)
+			if verbose:
+				print('\tGoal Epoch %d, Loss %f' % (epoch, np.mean(losses)))
 
 		self.trained = True
 
@@ -237,8 +244,10 @@ class TrajLSTM(object):
 		# Create final model
 		model = Model([traj_hist_input,intent_input], decoder_fully_connected)
 
-		# Compile model using loss
-		model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
+		# Compile model using loss		
+		model.compile(loss='mean_squared_error', 
+			optimizer=optimizers.Adam(clipnorm=10), metrics=['accuracy'])
+			# optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=10.)
 		self.init_weights = model.get_weights()
 
 		return model
@@ -256,6 +265,7 @@ class TrajLSTM(object):
 		dataset = dataset.prefetch(2)		
 
 		for epoch in range(num_epochs):
+			losses = []
 			for _, feature, label, goal in dataset:
 				feature = feature[:,:,:3]
 				
@@ -267,10 +277,16 @@ class TrajLSTM(object):
 
 				train_data = [feature, one_hot_goal]
 
-				self.model.train_on_batch(
+				batch_loss = self.model.train_on_batch(
 					train_data,
-					label[:,:,:2]
-					)
+					label[:,:,:2],
+					reset_metrics=True)
+
+				losses.append(batch_loss)
+			if verbose:
+				print('\tTraj Epoch %d, Loss %f' % (epoch, np.mean(losses)))
+
+		self.trained = True
 
 	def save_model(self, file_name):
 		if not self.trained:

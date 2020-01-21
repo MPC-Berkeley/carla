@@ -5,13 +5,14 @@ from IPython import get_ipython;
 import matplotlib.pyplot as plt
 import pandas
 import math
-from keras import metrics
+from keras import metrics, optimizers
 from keras import Input, Model
 from keras.models import Sequential
 from keras.models import load_model
 from keras.layers import Dense, Dropout, Softmax, Flatten, concatenate, Conv2D, MaxPooling2D
-from keras.layers import Activation, TimeDistributed, RepeatVector, Embedding
+from keras.layers import Activation, TimeDistributed, RepeatVector, Embedding, LeakyReLU, BatchNormalization
 from keras.layers.recurrent import LSTM
+from keras.regularizers import l1, l2
 from keras.callbacks import EarlyStopping
 from keras.utils import plot_model
 from keras.utils import to_categorical
@@ -29,19 +30,26 @@ from tqdm import tqdm
 import time
 import pdb
 
-def cnn_base_network(input_shape, img_feature_dim=10):
+def cnn_base_network(input_shape, img_feature_dim):
 	cnn_model = Sequential()
-	cnn_model.add( Conv2D(16, kernel_size=(8,8), strides=4, activation='relu', input_shape=input_shape) )
+	
+	cnn_model.add( Conv2D(16, kernel_size=(3,3), strides=1, activation='relu', input_shape=input_shape,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
 	cnn_model.add( MaxPooling2D(pool_size=(2,2)) )
-	cnn_model.add( Conv2D(32, kernel_size=(4,4), strides=2, activation='relu') )
+	cnn_model.add( Dropout(0.1) )
+
+	cnn_model.add( Conv2D(32, kernel_size=(3,3), strides=2, activation='relu',kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
 	cnn_model.add( MaxPooling2D(pool_size=(2,2)) )
+	cnn_model.add( Dropout(0.1) )
+	
 	cnn_model.add( Flatten() )
-	cnn_model.add( Dense(128) )
-	cnn_model.add( Dense(img_feature_dim) )
+	cnn_model.add( Dense(128,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
+	cnn_model.add( Dropout(0.2) )
+	cnn_model.add( Dense(img_feature_dim,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
+	cnn_model.add( BatchNormalization())
 	return cnn_model
 
 class CombinedCNNLSTM(object):
-	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
+	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, image_feature_dim=32, use_goal_info=True):
 		traj_input_shape    = (history_shape[1], history_shape[2])
 		goal_input_shape    = (goals_position_shape[1],)
 		n_outputs           = one_hot_goal_shape[1]
@@ -50,8 +58,8 @@ class CombinedCNNLSTM(object):
 		future_dim	        = future_shape[2]
 
 		self.use_goal_info = use_goal_info
-		self.goal_model = GoalCNNLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
-		self.traj_model = TrajCNNLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
+		self.goal_model = GoalCNNLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim, img_feature_dim=image_feature_dim)
+		self.traj_model = TrajCNNLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim, img_feature_dim=image_feature_dim)	
 
 	def fit(self, train_set, val_set, num_epochs=100, batch_size=64, verbose=0):
 		self.goal_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
@@ -82,10 +90,10 @@ class CombinedCNNLSTM(object):
 
 class GoalCNNLSTM(object):
 	"""This LSTM predicts the goal given trajectory/image inputs."""
-	def __init__(self, traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100):
+	def __init__(self, traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100, img_feature_dim=32):
 		self.beta       = beta   # hyperparameter for maximum entropy
 		self.gamma      = gamma  # hyperparameter for penalty for predicting occupied spots
-		self.model  = self._create_model(traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs)
+		self.model  = self._create_model(traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs, img_feature_dim)
 		self.trained = False
 
 		''' Debug '''
@@ -111,7 +119,7 @@ class GoalCNNLSTM(object):
 	def top_k_acc(self, y_true, y_pred, k=3):
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
-	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs, img_feature_dim=10):
+	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs, img_feature_dim):
 		# Input for previous trajectory information.
 		traj_hist_input = Input(shape=(traj_input_shape),name="input_trajectory")
 
@@ -130,7 +138,7 @@ class GoalCNNLSTM(object):
 		# for layer in cnn_base.layers:
 		# 	layer.trainable=False
 
-		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim=10)
+		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim)
 		img_hist_features = TimeDistributed(cnn_base)(img_hist_input)
 		lstm_cnn_inp = concatenate([traj_hist_input,img_hist_features])
 		# -----------------------------
@@ -153,7 +161,8 @@ class GoalCNNLSTM(object):
 		model = Model([traj_hist_input, goals_input, img_hist_input], goal_pred_output)
 		
 		# Compile model using loss
-		model.compile(loss=self.goal_loss(goals_input), optimizer='adam', metrics=[self.top_k_acc])
+		model.compile(loss=self.goal_loss(goals_input), 
+			optimizer=optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=10.), metrics=[self.top_k_acc])
 		self.init_weights = model.get_weights()
 
 		return model
@@ -171,6 +180,7 @@ class GoalCNNLSTM(object):
 
 		for epoch in range(num_epochs):
 			#t0 = time.time()
+			losses = []
 			for image, feature, label, goal in dataset:
 				feature = feature[:,:,:3]
 
@@ -182,11 +192,16 @@ class GoalCNNLSTM(object):
 			    # Convert to one-hot and the last one is undecided (-1)
 				one_hot_goal = to_categorical(goal_idx, num_classes=33) # ground truth goal label
 		
-				train_data = [feature, goal, image]
+				train_data = [feature, goal, image/255]
 
-				self.model.train_on_batch(
+				batch_loss = self.model.train_on_batch(
 					      train_data,
-					      one_hot_goal)
+					      one_hot_goal,
+					      reset_metrics=True)
+
+				losses.append(batch_loss)
+			if verbose:
+				print('\tGoal Epoch %d, Loss %f' % (epoch, np.mean(losses)))
 			#print('CNN goal ',time.time()-t0)
 
 		self.trained = True
@@ -214,7 +229,7 @@ class GoalCNNLSTM(object):
 
 			goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2]))
 	
-			test_data = [feature, goal, image]
+			test_data = [feature, goal, image/255]
 			
 			goal_idx = label[:,0, -1]
     	
@@ -229,16 +244,16 @@ class GoalCNNLSTM(object):
 
 class TrajCNNLSTM(object):
 	"""This LSTM generates trajectory predictions condioned on a goal location."""
-	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100):
+	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100, img_feature_dim=32):
 		self.trained = False
 		self.use_goal_info = use_goal_info
-		self.model = self._create_model(traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim)
+		self.model = self._create_model(traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim, img_feature_dim)
 		
 		''' Debug '''
 		#plot_model(self.model,to_file='traj_model.png', show_shapes=True)
 		#print(self.model.summary())
 
-	def _create_model(self, traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim, img_feature_dim=10):
+	def _create_model(self, traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim, img_feature_dim):
 		# Input for previous trajectory information.
 		traj_hist_input = Input(shape=(traj_input_shape),name="trajectory_input")
 
@@ -258,7 +273,7 @@ class TrajCNNLSTM(object):
 		# for layer in cnn_base.layers:
 		# 	layer.trainable=False
 		
-		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim=10)
+		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim)
 		# plot_model(cnn_base, to_file='cnn_base_model.png', show_shapes=True)
 
 		img_hist_features = TimeDistributed(cnn_base)(img_hist_input)
@@ -288,7 +303,9 @@ class TrajCNNLSTM(object):
 		model = Model([traj_hist_input,intent_input,img_hist_input], decoder_fully_connected)
 
 		# Compile model using loss
-		model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
+		model.compile(loss='mean_squared_error', 
+			optimizer=optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=10.), metrics=['accuracy'])
+
 		self.init_weights = model.get_weights()
 
 		return model
@@ -307,7 +324,9 @@ class TrajCNNLSTM(object):
 
 		for epoch in range(num_epochs):
 			#t0 = time.time()
+			losses = []
 			for image, feature, label, goal in dataset:
+				
 				feature = feature[:,:,:3]
 				
 				goal_idx = label[:, 0, -1]
@@ -316,13 +335,19 @@ class TrajCNNLSTM(object):
 				if not self.use_goal_info:
 					one_hot_goal = np.zeros_like(one_hot_goal)
 
-				train_data = [feature,one_hot_goal,image]
+				train_data = [feature,one_hot_goal,image/255]
 				
-				self.model.train_on_batch(
+				batch_loss = self.model.train_on_batch(
 					train_data,
-					label[:,:,:2]
-					)
+					label[:,:,:2],
+					reset_metrics=True)
+
+				losses.append(batch_loss)
+			if verbose:
+				print('\tTraj Epoch %d, Loss %f' % (epoch, np.mean(losses)))
 			#print('CNN traj ',time.time()-t0)
+
+		self.trained = True
 
 
 	def save_model(self, file_name):
@@ -348,6 +373,7 @@ class TrajCNNLSTM(object):
 			traj_predict_dict[0] = []
 
 			for image, feature, label, goal in dataset:
+
 				traj_gt.append(label[0,:,:-1].numpy())
 
 				# Convert to one-hot and the last one is undecided (-1)
@@ -357,7 +383,7 @@ class TrajCNNLSTM(object):
 				if not self.use_goal_info:
 					one_hot_goal = np.zeros_like(one_hot_goal)
 
-				test_data = [feature[:,:,:3], one_hot_goal, image]
+				test_data = [feature[:,:,:3], one_hot_goal, image/255]
 				
 				traj_predict_dict[0].append(self.model.predict(test_data, steps=1)[0,:,:])
 
@@ -379,10 +405,8 @@ class TrajCNNLSTM(object):
 					if k_ind == 0:		
 						traj_gt.append(label[0,:,:-1].numpy())
 
-					# if not use_image:
-					# 	image = tf.zeros_like(image)
 
-					test_data = [feature[:,:,:3], one_hot_goals[:,instance_ind,:], image]
+					test_data = [feature[:,:,:3], one_hot_goals[:,instance_ind,:], image/255]
 					
 					traj_predict_dict[k].append(self.model.predict(test_data, steps=1)[0,:,:])
 										
@@ -398,7 +422,7 @@ if __name__ == '__main__':
 
 	import os
 	os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-	os.environ["CUDA_VISIBLE_DEVICES"]= "3"
+	os.environ["CUDA_VISIBLE_DEVICES"]= "4"
 
 	traj_input_shape    = (5,3)
 	goal_input_shape    = (96,)
@@ -411,10 +435,23 @@ if __name__ == '__main__':
 	beta = 1.0
 	gamma = 1.0
 	
-	goalcnnlstm_test = GoalCNNLSTM(
-	traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100)
+	# goalcnnlstm_test = GoalCNNLSTM(
+	# traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100)
 
-	trajcnnlstm_test = TrajCNNLSTM(
-	traj_input_shape, intent_input_shape,  image_input_shape, future_horizon, future_dim)
+	# for layer in goalcnnlstm_test.model.layers:
+	# 	print(layer, layer.trainable)
 
+	# trajcnnlstm_test = TrajCNNLSTM(
+	# traj_input_shape, intent_input_shape,  image_input_shape, future_horizon, future_dim)
+
+
+	tmp_input = Input(shape=(image_input_shape[1:]),name="tmp_input")
+
+	cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim=10)
+	for layer in cnn_base.layers:
+		print(layer, layer.trainable)
+
+	model = Model(tmp_input, cnn_base)
+
+	model.compile(loss='mean_squared_error', optimizer='adam')
 
