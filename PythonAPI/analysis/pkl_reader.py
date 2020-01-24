@@ -214,6 +214,7 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
 
     # Transform all snippets into ego frame, if ego_frame=True
     features_global = copy.deepcopy(features)
+    labels_global   = copy.deepcopy(labels)
     if ego_frame:
         for id_snpt in range(len(features)):
             current = features[id_snpt][-1, :].copy()
@@ -233,4 +234,4 @@ def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind
             for id_g in range(len(goals)):
                 goal_snpts[id_snpt][id_g, :2] = R @ (goal_snpts[id_snpt][id_g, :2] - curr_position)
 
-    return np.array(features), np.array(features_global), np.array(labels), np.array(goal_snpts)
+    return np.array(features), np.array(features_global), np.array(labels), np.array(labels_global), np.array(goal_snpts)

@@ -1,11 +1,62 @@
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import pickle
 from keras.utils import to_categorical
 from PIL import Image
 from PIL import ImageDraw
 import pdb
+
+def get_parking_lot_image_hist(parking_lot, static_objs, feature, ego_dims, resize_factor=1.0):
+    # code for the plotting of the parking lot
+    ''' 
+    Scene Image construction. Resolution/Image Params hardcoded for now.
+    '''
+    # Get center point (x,y) of the parking lot
+    x0 = np.mean([min(x[0] for x in parking_lot),max(x[0] for x in parking_lot)])
+    y0 = np.mean([min(x[1] for x in parking_lot),max(x[1] for x in parking_lot)])
+
+    # Parking dimensions we want to consider
+    parking_size = [20,65] # dX and dY
+    res = 0.1 # in metres
+    img_center = [x0,y0] # parking lot center
+
+    h = int(parking_size[1] / res)
+    w = int(parking_size[0] / res)
+
+    num_imgs = len(feature)
+    img_hist = np.zeros((num_imgs, h, w, 3), dtype=np.uint8)
+    img_hist[:,:,:,0] = generate_image(parking_size,res,img_center,parking_lot)
+    img_hist[:,:,:,1] = generate_image(parking_size,res,img_center,static_objs)
+
+    for ind_p, ego_pose in enumerate(feature):
+        ego_bb = [ego_pose[0],         # x
+                  ego_pose[1],         # y
+                  ego_dims['length'],  # dx
+                  ego_dims['width'],   # dy
+                  ego_pose[2]]         # theta
+
+        img_hist[ind_p,:,:,2] = generate_image_ego(parking_size,res,img_center,ego_bb)
+    
+    # Return place holder
+    img_return = img_hist    
+    if resize_factor > 1.0:
+        raise NotImplemented()
+    elif resize_factor < 0.0:
+        raise ValueError("Invalid resize_factor")
+    else:
+        # If we want resize, refill the slices
+        h_resize = int(resize_factor * h)
+        w_resize = int(resize_factor * w)
+        img_return  = np.zeros((num_imgs, h_resize, w_resize, 3), dtype=np.uint8)
+        # Go through each image
+        for k in range(num_imgs):
+            img_pil = np.asarray( Image.fromarray(img_hist[k,:,:,:]).resize((w_resize, h_resize)) )
+            img_return[k,:,:,:] = img_pil
+
+    img_return = np.flip(img_return, axis=1) # flip based on pixel axis to align with map frame (h)
+    return img_return
 
 def fix_angle(diff_ang):
     while diff_ang > np.pi:
@@ -146,6 +197,99 @@ def sup_plot(model_name, plot_set, traj_idx, goal_pred, traj_pred_dict, limit=No
         else:
             print( model_name + ": Meet problem saving Trajectory # %03d movie." % num_traj)
             
+def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, features_global, labels_global, goal_pred, goal_gt, goal_snpts, top_k_goal):
+    print(case_name +": Start processing trajectory .....")
+    directory = './figures/' + case_name
+    if not os.path.exists(directory):
+        os.mkdir(directory)
+
+
+    for idx, feature in enumerate(features_global):
+        fig = plt.figure(figsize=(4, 10), dpi=200, facecolor='w', edgecolor='k')
+        ax = plt.gca()
+
+        plt.rcParams['font.weight'] = 'normal'
+        plt.rcParams['font.size'] = 14
+
+        # Line
+        for line_info in parking_lot:
+            rect = patches.Rectangle((line_info[0]-line_info[2]/2, line_info[1]-line_info[3]/2),line_info[2],line_info[3],line_info[4], facecolor='k')
+            ax.add_patch(rect)
+
+        # Static objects
+        for static_object in static_object_list:
+            if static_object[0] < 275 or static_object[0] > 295:
+                continue
+            rect = patches.Rectangle((static_object[0]-static_object[2]/2, static_object[1]-static_object[3]/2),static_object[2],static_object[3],static_object[4], facecolor='#C6B7B3')
+            ax.add_patch(rect)
+
+        # Transformation
+        ego_global = feature[-1]
+        th = ego_global[2]
+        R = np.array([[ np.cos(th),-np.sin(th)], \
+                      [ np.sin(th), np.cos(th)]])
+        curr = ego_global.copy()[:2]
+        
+        # Traj History
+        plt.plot(feature[:,0], feature[:,1], linewidth = 5, color = '#186A3B', alpha= 0.5)
+        
+        # Ground Truth Future Traj
+        label_global = labels_global[idx].copy()
+        label_global_trans = label_global[:,:2]
+        plt.plot(label_global_trans[:,0], label_global_trans[:,1], linewidth = 5, color = 'b', alpha= 0.5)
+        
+        
+        # Predicted Trajectory
+        probs = goal_pred[idx].copy()
+        probs.sort()
+        for top_k, traj_pred in traj_pred_dict.items():
+            prob = probs[-1-top_k]
+        
+            traj_pred_global = traj_pred[idx] @ R.T + curr
+
+            plt.plot(traj_pred_global[:,0], traj_pred_global[:,1],'.', markersize = 15, color = 'r', alpha= prob)
+        
+        # Predicted goals
+        goal_snpts_global = goal_snpts[idx].copy()
+        goal_snpts_global[:, :2] = goal_snpts_global[:, :2] @ R.T + curr
+            
+        for top_k in top_k_goal:
+            j = np.argsort(goal_pred[idx])[-1-top_k]
+            prob = probs[-1-top_k]
+
+            # Predicted Goal
+            if j == 32:
+                plt.plot(curr[0], curr[1], 'v', color = 'r', markersize = 20, alpha=prob)
+            else:
+                plt.plot(goal_snpts_global[j, 0], goal_snpts_global[j, 1], 'o', color = 'r', markersize = 20, alpha=prob)
+        
+        # Ground Truth Goal
+        gt_idx = np.argmax(goal_gt[idx])
+        if gt_idx == 32: # If it is "-1" -> undetermined 
+            plt.plot(curr[0], curr[1], 'v', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
+        else:
+            plt.plot(goal_snpts_global[gt_idx, 0], goal_snpts_global[gt_idx, 1], 'o', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
+
+
+        plt.xlabel('x (m)')
+        plt.ylabel('y (m)')
+            
+        plt.plot()
+        plt.axis('equal')
+
+        plt.xlim(275, 295)
+        plt.ylim(180, 240)
+
+        fig.savefig('./figures/' + case_name + '/frame_%03d.png' % idx)
+        plt.close(fig)
+
+    fps = 2
+    mv = os.system("ffmpeg -r {0:d} -i ./figures/{1:s}/frame_%03d.png -vcodec mpeg4 -y ./figures/{1:s}_movie.mp4".format(fps, case_name) )
+    if mv == 0:
+        print( case_name + ": Trajectory movie saved successfully.")
+    else:
+        print( case_name + ": Meet problem saving Trajectorymovie.")
+
 def generate_image(parking_size,resolution,img_center,lines):
     
     # Total parking lot dimensions to consider
