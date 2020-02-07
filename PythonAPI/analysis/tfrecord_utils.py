@@ -1,8 +1,10 @@
 import numpy as np
 import tensorflow as tf
-import pdb
-from keras.utils import to_categorical
 
+# Helper functions to prepare and parse a TFRecord-based dataset.  Used in conjunction with 
+# snippet generation code in pkl_reader.py.
+
+# Standard TFRecord feature generation.  See https://www.tensorflow.org/tutorials/load_data/tfrecord
 def _int64_feature_list(value):
 	if not isinstance(value, list):
 		value = [value]
@@ -21,20 +23,21 @@ def _float_feature_list(value):
 	if not isinstance(value, list):
 		value = [value]
 	return tf.train.Feature(float_list=tf.train.FloatList(value=value))
-
+######################################################################################################
+# TFRecord writing for our dataset.
 def write_tfrecord(features, scene_images, labels, goal_snpts,file_location,meta_data_dict):
   # Note: meta_data_dict is not used.  Can be incorporated into the tfrecord in the future.
   writer = tf.io.TFRecordWriter(file_location)
   
   for feature, scene_image, label,  goal_snpt in zip(features,scene_images,labels,goal_snpts):
 
-      ftr = {'image_hist'   : _bytes_feature_list(tf.compat.as_bytes(scene_image.tostring())),
+      ftr = {'image_hist'   : _bytes_feature_list(tf.compat.as_bytes(scene_image.tostring())),           # image history for LSTM
              'image_size'   : _bytes_feature_list(np.array(scene_image.shape,np.int32).tostring()),
-             'feature'      : _bytes_feature_list(tf.io.serialize_tensor(feature)),
+             'feature'      : _bytes_feature_list(tf.io.serialize_tensor(feature)),                      # motion history for LSTM    
              'feature_size' : _bytes_feature_list(np.array(feature.shape,np.int32).tostring()),
-             'label'        : _bytes_feature_list(tf.io.serialize_tensor(label)),
+             'label'        : _bytes_feature_list(tf.io.serialize_tensor(label)),                        # future motion and intent label
              'label_size'   : _bytes_feature_list(np.array(label.shape,np.int32).tostring()),
-             'goal_snpt'    : _bytes_feature_list(tf.io.serialize_tensor(goal_snpt)),
+             'goal_snpt'    : _bytes_feature_list(tf.io.serialize_tensor(goal_snpt)),                    # occupancy information
              'goal_snpt_size' : _bytes_feature_list(np.array(goal_snpt.shape,np.int32).tostring()),
             }
       example = tf.train.Example(features = tf.train.Features(feature=ftr))
@@ -42,14 +45,16 @@ def write_tfrecord(features, scene_images, labels, goal_snpts,file_location,meta
 
   writer.close()
 
+# Main parsing function used for the TFRecord.
+# Used in individual model files for parsing and reading.  Refer to them for usage details.
 def _parse_function(proto):
-    ftr = {'image_hist'     : tf.io.FixedLenFeature([], tf.string),
-           'image_size'     : tf.io.FixedLenFeature([], tf.string),
-           'feature'        : tf.io.FixedLenFeature([], tf.string),
+    ftr = {'image_hist'     : tf.io.FixedLenFeature([], tf.string), # image history for LSTM
+           'image_size'     : tf.io.FixedLenFeature([], tf.string), 
+           'feature'        : tf.io.FixedLenFeature([], tf.string), # motion history for LSTM
            'feature_size'   : tf.io.FixedLenFeature([], tf.string),
-           'label'          : tf.io.FixedLenFeature([], tf.string),
+           'label'          : tf.io.FixedLenFeature([], tf.string), # future motion and intent label
            'label_size'     : tf.io.FixedLenFeature([], tf.string),
-           'goal_snpt'      : tf.io.FixedLenFeature([], tf.string),
+           'goal_snpt'      : tf.io.FixedLenFeature([], tf.string), # occupancy information
            'goal_snpt_size' : tf.io.FixedLenFeature([], tf.string),
           }
     parsed_features = tf.io.parse_single_example(proto,ftr)
@@ -74,81 +79,3 @@ def _parse_function(proto):
     goal = tf.reshape(tf.io.parse_tensor(parsed_features['goal_snpt'],out_type=tf.float64),goal_size)
 
     return image, feature, label, goal
-
-def read_tfrecord(files, cutting=False, shuffle=True, repeat=True, batch_size=64):
-  # Inefficient way to count number of data instances in files.
-  count = 0
-  for f in files:
-        for record in tf.compat.v1.io.tf_record_iterator(f):
-            count += 1
-            
-  dataset = tf.data.TFRecordDataset(files)
-  dataset = dataset.map(_parse_function)
-
-  if repeat:
-    dataset = dataset.repeat()
-  if shuffle:
-    dataset = dataset.shuffle(2048)
-
-  dataset = dataset.batch(batch_size)
-  iterator = dataset.__iter__()
-
-  image, feature, label, goal = iterator.get_next()
-
-  if cutting:
-    # Remove velocity information from feature.
-    # Only pose (x, y, theta) returned.
-    feature = feature[:,:,:3]
-    
-  # image:   overhead semantic image of the parking lot
-  # feature: motion history in the prior timesteps up to current timestep
-  # label:   motion future (x,y,theta,v,w) and intention label for future timesteps
-  # goal:    occupancy information (goal_x, goal_y, goal_free)
-  # count:   number of dataset instances in the specified tfrecord files
-  return image, feature, label, goal, count
-
-def read_gt_tfrecord(files):
-  # This function just returns ground truth in aggregated form.
-
-  # Inefficient way to count number of data instances in files.
-  count = 0
-  for f in files:
-        for record in tf.compat.v1.io.tf_record_iterator(f):
-            count += 1
-
-  dataset = tf.data.TFRecordDataset(files)
-  dataset = dataset.map(_parse_function)
-
-  iterator = dataset.__iter__()
-
-  goal_gt =  [] # goal index ground truth
-  traj_gt =  [] # future trajectory ground truth
-
-  for k in range(count):
-    image, feature, label, goal = iterator.get_next()
-
-    goal_idx = label[0, -1]
-    # Convert to one-hot and the last one is undecided (-1)
-    goal_gt.append(to_categorical(goal_idx, num_classes=33))
-    traj_gt.append(label[:,:-1].numpy())
-
-  return np.array(goal_gt),np.array(traj_gt)
-
-
-
-
-
-
-#image = np.zeros((100,50),dtype=np.uint8)
-#image[0,:] =  1
-#image[10,:] = 1
-#hist = np.random.randn(19)
-#print(len(hist))
-#label = 1
-
-#writer = tf.io.TFRecordWriter('tfrecord.tf')
-
-#feature = {'image' : _bytes_feature_list(tf.compat.as_bytes(image.tostring())),
-#           '
-#           'label' : _int64_feature(int(label)),
-#           'hist' : _float_feature(hist)}

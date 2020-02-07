@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import copy
 
+# Code Status (as of 2/6/20): this works but is hard-coded for our parking lot experiment.  
+# extract_goals assumes vehicles lie in a nice xy grid and we don't have outliers.  
+# Works fine but fails if the data collected has issues (stale ego vehicle hanging around, no intention pressed, etc.).
+
 # Function to get all possible goals, along with occupancy.
 # Each goal is an array [x,y,free].
 def extract_goals(res_dict):
@@ -142,11 +146,6 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
         ehead = entry['orientation'][0]
         vx = entry['linear_velocity'][0]
         vy = entry['linear_velocity'][1]
-        # This is super noisy...
-        #vhead = np.arctan2(vy,vx) 
-        #ehead_vec = np.array([np.cos(ehead), np.sin(ehead)])
-        #vhead_vec = np.array([np.cos(vhead), np.sin(vhead)])
-        #vel_sign = np.sign( np.dot(ehead_vec, vhead_vec) )
         
         if len(ego_v) > 0:
             v_long = get_longitudinal_velocity(time, vx, vy, ego_v[-1], ego_control_dict)
@@ -172,7 +171,7 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     
     return ego_trajectory, start_ind, switch_ind, end_ind, goal_ind
 
-
+# Performs trajectory interpolation handling nuances of heading and intent label.
 def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_intent = False):
     x_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,1])
     y_interp = np.interp(t_interp, ego_trajectory[:,0], ego_trajectory[:,2]) 
@@ -191,15 +190,28 @@ def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_int
         return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp, intent))
     else:
         return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp))
+
+# Takes a full trajectory and cuts it into snippets that are individual dataset instances.   
+def get_ego_trajectory_prediction_snippets(ego_trajectory,    # full demonstration trajectory
+                                           start_ind,         # index at which to start for interpolation
+                                           switch_ind,        # index at which the intention is determined
+                                           end_ind,           # index at which to stop for interpolation
+                                           goal_ind,          # which intention was determined at switch_ind
+                                           goals,             # occupancy information
+                                           Nhist=5,           # number of history timesteps (feature)
+                                           Npred=20,          # number of prediction timesteps (label)
+                                           Nskip=5,           # "stride" used to sample snippets
+                                           dt=0.1,            # time discretization corresponding to Nhist, Npred.
+                                           ego_frame=False    # represent all data in the ego frame based on the current (final in Nhist) pose
+                                           ):
     
-def get_ego_trajectory_prediction_snippets(ego_trajectory, start_ind, switch_ind, end_ind, goal_ind, goals,\
-                                           Nhist=5, Npred=20, Nskip=5, dt=0.1, ego_frame=False):
     features = []; labels = []; goal_snpts = []
     
     t_range_start = ego_trajectory[start_ind, 0] + Nhist * dt
     t_range_end   = ego_trajectory[end_ind, 0] - Npred * dt
     t_skip = Nskip * dt
     
+    # Snippet generation done here with a sliding window approach.
     for t_snippet in np.arange(t_range_start, t_range_end + 0.5 * t_skip, t_skip):
         t_hist = [x*dt + t_snippet for x in range(-Nhist + 1, 1)] # -N_hist + 1, ... , 0 -> N_hist steps
         t_pred = [x*dt + t_snippet for x in range(1, Npred+1)] # 1, ..., N_pred -> N_pred steps

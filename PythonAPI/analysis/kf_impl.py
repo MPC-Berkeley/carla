@@ -5,16 +5,11 @@ from utils import fix_angle
 import pickle
 import datetime
 import scipy.spatial as ssp
-import tensorflow as tf # needed to parse tfrecord
+import tensorflow as tf
 from tfrecord_utils import _parse_function
 from keras.utils import to_categorical
-import pdb
 
-'''
-Improvements:
-- variable input sizes (or better checking of arguments) for the filter
-- base KF class implementation in case of multiple KF implementatations
-'''
+# This code provides the implementation of the EKF with constant velocity used for intent/goal and trajectory prediction.
 
 class EKF_CV_MODEL(object):
 	def __init__(self, 
@@ -123,7 +118,7 @@ class EKF_CV_MODEL(object):
 				self.time_update()
 				self.measurement_update(x_hist[i,:3]) # only pose
 				
-			# Then run predict for N_pred steps
+			# Then run predict for N_pred steps (extrapolation).
 			x_pred = []; P_pred = []
 			for i in range(N_pred):
 				self.time_update()
@@ -131,33 +126,38 @@ class EKF_CV_MODEL(object):
 				P_pred.append(self.get_P())
 			
 			traj_pred.append(x_pred)
-			# P_pred not used for now.
+			# P_pred not used for now, could use for a pseudo-stochastic reachable set.
 
 		traj_pred = np.array(traj_pred).reshape(x_hists.shape[0], N_pred, self.nx)
 
 		if position_only:
-			return traj_pred[:,:,:2]
+			return traj_pred[:,:,:2] # just xy trajectory
 		else:
-			return traj_pred
+			return traj_pred         # full state trajectory
 
 	def goal_prediction(self, x_preds, goals, max_dist_thresh=20.):
+		# Implements inverse Euclidean distance goal prediction.
+		# max_dist_thresh used to throw out spots that are very far away
+		# and put that into the "keep going" state.
 		num_goals = int(goals.shape[1]) 
 		goal_pred = np.zeros( (len(x_preds), num_goals + 1) )		
 
 		for i, (x_pred, goal) in enumerate(zip(x_preds, goals)):
-			inds_free = np.ravel( np.argwhere(goal[:,2] > 0.) )
-			xy_pred_final = x_pred[-1,:2].reshape(1,2)
-			xy_free = goal[inds_free,:2]
-			dist = np.ravel( ssp.distance_matrix(xy_free, xy_pred_final) )
-			inv_dist = 1. / np.array([max(x, 0.01) for x in dist])
-			prob_intent = inv_dist / np.sum(inv_dist)
-			prob_keep_going = 0
+			inds_free = np.ravel( np.argwhere(goal[:,2] > 0.) ) # check occupancy to get free spots
+			xy_pred_final = x_pred[-1,:2].reshape(1,2) # final position estimated in future trajectory
+			xy_free = goal[inds_free,:2] # xy position of free spots identified
+			dist = np.ravel( ssp.distance_matrix(xy_free, xy_pred_final) ) # Euclidean distance to free spots
+			inv_dist = 1. / np.array([max(x, 0.01) for x in dist]) # inverse distance with thresh to avoid divide-by-0
+			prob_intent = inv_dist / np.sum(inv_dist) # normalizing to get a prob. dist.
+			prob_keep_going = 0 # prob of an undetermined/keep going state (used here for far away goals)
 
 			for j in range(len(dist)):
 				if dist[j] > max_dist_thresh:
+					# if the goal is too far, move prob. mass to prob_keep_going
 					prob_keep_going += prob_intent[j]
 					prob_intent[j] = 0.
 
+			# final predicted distribution passed to goal prediction result.
 			goal_pred[i, inds_free] = prob_intent
 			goal_pred[i, -1] = prob_keep_going
 
@@ -167,6 +167,7 @@ class EKF_CV_MODEL(object):
 	def _extract_dict_from_tfrecords(files):
 		# Given a set of tfrecord files, assembles
 		# an aggregated dictionary for easier analysis.
+		# Note: this isn't practical if the dataset is extremely large.
 		tset = {}
 		tset['history_traj_data'] = []
 		tset['future_traj_data']  = []
@@ -197,6 +198,7 @@ class EKF_CV_MODEL(object):
 
 	@staticmethod
 	def _f_cv(x, dt):
+		# Motion model
 		x_new = np.zeros(5)
 		x_new[0] = x[0] + x[3] * np.cos(x[2]) * dt  #x
 		x_new[1] = x[1] + x[3] * np.sin(x[2]) * dt  #y
@@ -207,6 +209,7 @@ class EKF_CV_MODEL(object):
 	
 	@staticmethod
 	def _f_cv_jacobian(x, dt):
+		# Jacobian of motion model, computed by hand.
 		v = x[3] 
 		th = x[2]
 		return np.array([[1, 0, -v*np.sin(th)*dt, np.cos(th)*dt,  0], \
@@ -217,6 +220,7 @@ class EKF_CV_MODEL(object):
 						 ]).astype(np.float)
 	@staticmethod
 	def _f_cv_num_jacobian(x, dt, eps=1e-8):
+		# Jacobian of motion model with finite differences (for gradient checking).
 		nx = len(x)
 		jac = np.zeros([nx,nx])
 		for i in range(nx):
@@ -231,6 +235,7 @@ class EKF_CV_MODEL(object):
 
 	@staticmethod
 	def _identify_Q_sequence(x_sequence, dt=0.1, nx=5):
+		# Given a sequence of states, estimate disturbance covariance Q.  Not really used.
 		Q_est = np.zeros((nx,nx))
 		N = len(x_sequence)
 		for i in range(1, N):
@@ -243,6 +248,8 @@ class EKF_CV_MODEL(object):
 
 	@staticmethod
 	def _identify_Q_train(train_set, dt=0.1):
+		# "Model fit" for the EKF, estimate disturbance covariance from the train set.
+		
 		# number of training instances
 		N_train = train_set['history_traj_data'].shape[0]
 

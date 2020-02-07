@@ -20,24 +20,26 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-from tfrecord_utils import read_tfrecord, read_gt_tfrecord,_parse_function
+from tfrecord_utils import _parse_function
 import tensorflow as tf
 import glob
 from datetime import datetime
 from tqdm import tqdm
 import time
-import pdb
+
+# This file provides the implementation of the LSTM used for intent/goal and trajectory prediction.
+# CNN-LSTM is similar, with the addition of a image encoder and image features added with motion history.
 
 class CombinedLSTM(object):
 	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
-		traj_input_shape    = (history_shape[1], history_shape[2])
-		goal_input_shape    = (goals_position_shape[1],)
-		n_outputs           = one_hot_goal_shape[1]
-		intent_input_shape  = (n_outputs,)
-		future_horizon      = future_shape[1]
-		future_dim	        = future_shape[2]
+		traj_input_shape    = (history_shape[1], history_shape[2])  # motion history: should be N_hist by state_dim 
+		goal_input_shape    = (goals_position_shape[1],)            # occupancy: num_spots by (x_spot, y_spot, is_free) -> flattened to 3 * num_spots
+		n_outputs           = one_hot_goal_shape[1]                 # goal/intent classification: num_spots + 1
+		intent_input_shape  = (n_outputs,)                          # intent input to trajectory prediction model: intent input is the same size as the intent classification above.
+		future_horizon      = future_shape[1]                       # future prediction horizon: N_pred
+		future_dim          = future_shape[2]                       # future prediction state dimension: (in our usage, we drop heading so state_dim=2 for output)
 
-		self.use_goal_info = use_goal_info
+		self.use_goal_info = use_goal_info # if True, use ground truth intent information while training.  Else zero out the intent label and only learn from motion.
 		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
 
@@ -48,6 +50,8 @@ class CombinedLSTM(object):
 			                      verbose=verbose)
 
 	def predict(self, test_set, top_k_goal=[]):
+		# top_k_goal, if filled in, can allow for multimodal predictions based on estimated intent.
+		# See predict method of TrajCNNLSTM for details.
 		goal_pred, goal_gt = self.goal_model.predict(test_set)
 		top_idxs = np.argsort(goal_pred,axis=1)
 		traj_pred_dict, traj_gt = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal)
@@ -97,6 +101,7 @@ class GoalLSTM(object):
 		return loss
 
 	def top_k_acc(self, y_true, y_pred, k=3):
+		# We call this top-n accuracy in the paper, basically accuracy if you get k tries to pick the label based on highest probability guesses.
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
 	def _create_model(self, traj_input_shape, goal_input_shape, hidden_dim, n_outputs):
@@ -135,6 +140,7 @@ class GoalLSTM(object):
 		self.model.set_weights(self.init_weights)
 
 	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64, verbose=0,):
+		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
 		dataset = tf.data.TFRecordDataset(train_set)
 		dataset = dataset.map(_parse_function)
@@ -145,7 +151,7 @@ class GoalLSTM(object):
 		for epoch in range(num_epochs):
 			losses = []
 			for _, feature, label, goal in dataset:
-				feature = feature[:,:,:3]
+				feature = feature[:,:,:3] # only pose information from motion history used.
 
 				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2])) # occupancy
 
@@ -204,11 +210,11 @@ class GoalLSTM(object):
 		return goal_pred, goal_gt
 
 class TrajLSTM(object):
-	"""This LSTM generates trajectory predictions condioned on a goal location."""
+	"""This LSTM generates trajectory predictions conditioned on a goal location."""
 	def __init__(self, traj_input_shape, intent_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100):
-		self.trained = False
-		self.use_goal_info = use_goal_info
+		self.use_goal_info = use_goal_info # if true, use intent label in training/prediction.  Else learn on zeroed intent label (i.e. motion information only).
 		self.model = self._create_model(traj_input_shape, intent_input_shape, hidden_dim, future_horizon, future_dim)
+		self.trained = False
 		
 		''' Debug '''
 		# plot_model(self.model,to_file='traj_model.png')
@@ -256,8 +262,8 @@ class TrajLSTM(object):
 		self.model.set_weights(self.init_weights)
 
 	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0):
+		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
-
 		dataset = tf.data.TFRecordDataset(train_set)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
@@ -267,13 +273,16 @@ class TrajLSTM(object):
 		for epoch in range(num_epochs):
 			losses = []
 			for _, feature, label, goal in dataset:
-				feature = feature[:,:,:3]
+				feature = feature[:,:,:3] # only pose information from motion history used.
 				
+				# All intention labels, with shape (batch_size, goal_nums)
 				goal_idx = label[:, 0, -1]
+
+				# Convert to one-hot and the last one is undecided (-1)
 				one_hot_goal = to_categorical(goal_idx, num_classes=33) # ground truth goal label
 
 				if not self.use_goal_info:
-					one_hot_goal = np.zeros_like(one_hot_goal)
+					one_hot_goal = np.zeros_like(one_hot_goal) # intent distribution not used
 
 				train_data = [feature, one_hot_goal]
 
@@ -303,7 +312,12 @@ class TrajLSTM(object):
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.batch(1)
 
+		# Dictionary returned with the key equal to the k in top_k_goal.
+		# If unimodal, only a single key = 0 is given.
+		# The value is a trajectory rollout predicted by the model.
 		traj_predict_dict = dict()
+		
+		# Ground truth trajectory for comparison.
 		traj_gt = []
 		
 		if not top_k_goal:
