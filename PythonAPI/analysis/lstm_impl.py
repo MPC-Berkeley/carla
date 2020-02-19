@@ -32,21 +32,21 @@ import time
 
 class CombinedLSTM(object):
 	def __init__(self, history_shape, goals_position_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, use_goal_info=True):
-		traj_input_shape    = (history_shape[1], history_shape[2])  # motion history: should be N_hist by state_dim 
-		goal_input_shape    = (goals_position_shape[1],)            # occupancy: num_spots by (x_spot, y_spot, is_free) -> flattened to 3 * num_spots
-		n_outputs           = one_hot_goal_shape[1]                 # goal/intent classification: num_spots + 1
+		traj_input_shape    = (history_shape[0], history_shape[1])  # motion history: should be N_hist by state_dim 
+		goal_input_shape    = (goals_position_shape[0],)            # occupancy: num_spots by (x_spot, y_spot, is_free) -> flattened to 3 * num_spots
+		n_outputs           = one_hot_goal_shape[0]                 # goal/intent classification: num_spots + 1
 		intent_input_shape  = (n_outputs,)                          # intent input to trajectory prediction model: intent input is the same size as the intent classification above.
-		future_horizon      = future_shape[1]                       # future prediction horizon: N_pred
-		future_dim          = future_shape[2]                       # future prediction state dimension: (in our usage, we drop heading so state_dim=2 for output)
+		future_horizon      = future_shape[0]                       # future prediction horizon: N_pred
+		future_dim          = future_shape[1]                       # future prediction state dimension: (in our usage, we drop heading so state_dim=2 for output)
 
 		self.use_goal_info = use_goal_info # if True, use ground truth intent information while training.  Else zero out the intent label and only learn from motion.
 		self.goal_model = GoalLSTM(traj_input_shape, goal_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim)
 		self.traj_model = TrajLSTM(traj_input_shape, intent_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim)	
 
-	def fit(self, train_set, val_set, num_epochs=100, batch_size=64, verbose=0):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
+	def fit(self, train_set, num_epochs=100, batch_size=64, verbose=0):
+		self.goal_model.fit_model(train_set, num_epochs=num_epochs, batch_size=batch_size, \
 		                          verbose=verbose)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
+		self.traj_model.fit_model(train_set, num_epochs=num_epochs, batch_size=batch_size, \
 			                      verbose=verbose)
 
 	def predict(self, test_set, top_k_goal=[]):
@@ -139,7 +139,7 @@ class GoalLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64, verbose=0,):
+	def fit_model(self, train_set, num_epochs=100, batch_size = 64, verbose=0,):
 		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
 		dataset = tf.data.TFRecordDataset(train_set)
@@ -261,7 +261,7 @@ class TrajLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0):
+	def fit_model(self, train_set, num_epochs=100, batch_size=64,verbose=0):
 		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
 		dataset = tf.data.TFRecordDataset(train_set)

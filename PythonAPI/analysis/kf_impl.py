@@ -62,7 +62,7 @@ class EKF_CV_MODEL(object):
 		self.R  = kf_dict['R']
 		self.dt = kf_dict['dt']
 
-	def fit(self, train_set, val_set):
+	def fit(self, train_set):
 		tset = EKF_CV_MODEL._extract_dict_from_tfrecords(train_set)
 		self.Q = EKF_CV_MODEL._identify_Q_train(tset, self.dt)
 
