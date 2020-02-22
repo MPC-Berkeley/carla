@@ -197,7 +197,7 @@ def sup_plot(model_name, plot_set, traj_idx, goal_pred, traj_pred_dict, limit=No
         else:
             print( model_name + ": Meet problem saving Trajectory # %03d movie." % num_traj)
             
-def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, features_global, labels_global, goal_pred, goal_gt, goal_snpts, top_k_goal):
+def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, features_global, labels_global, goal_pred, goal_gt, goal_snpts, top_k_goal, movie=True):
     print(case_name +": Start processing trajectory .....")
     directory = './figures/' + case_name
     if not os.path.exists(directory):
@@ -230,26 +230,9 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
                       [ np.sin(th), np.cos(th)]])
         curr = ego_global.copy()[:2]
         
-        # Traj History
-        plt.plot(feature[:,0], feature[:,1], linewidth = 5, color = '#186A3B', alpha= 0.5)
-        
-        # Ground Truth Future Traj
-        label_global = labels_global[idx].copy()
-        label_global_trans = label_global[:,:2]
-        plt.plot(label_global_trans[:,0], label_global_trans[:,1], linewidth = 5, color = 'b', alpha= 0.5)
-        
-        
-        # Predicted Trajectory
+        # Predicted goals
         probs = goal_pred[idx].copy()
         probs.sort()
-        for top_k, traj_pred in traj_pred_dict.items():
-            prob = probs[-1-top_k]
-        
-            traj_pred_global = traj_pred[idx] @ R.T + curr
-
-            plt.plot(traj_pred_global[:,0], traj_pred_global[:,1],'.', markersize = 15, color = 'r', alpha= prob)
-        
-        # Predicted goals
         goal_snpts_global = goal_snpts[idx].copy()
         goal_snpts_global[:, :2] = goal_snpts_global[:, :2] @ R.T + curr
             
@@ -259,16 +242,32 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
 
             # Predicted Goal
             if j == 32:
-                plt.plot(curr[0], curr[1], 'v', color = 'r', markersize = 20, alpha=prob)
+                plt.plot(curr[0], curr[1], 'p', color = 'r', markersize = 20, alpha=prob)
             else:
-                plt.plot(goal_snpts_global[j, 0], goal_snpts_global[j, 1], 'o', color = 'r', markersize = 20, alpha=prob)
+                plt.plot(goal_snpts_global[j, 0], goal_snpts_global[j, 1], 'p', color = 'r', markersize = 20, alpha=prob)
         
         # Ground Truth Goal
         gt_idx = np.argmax(goal_gt[idx])
         if gt_idx == 32: # If it is "-1" -> undetermined 
-            plt.plot(curr[0], curr[1], 'v', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
+            plt.plot(curr[0], curr[1], 'p', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
         else:
-            plt.plot(goal_snpts_global[gt_idx, 0], goal_snpts_global[gt_idx, 1], 'o', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
+            plt.plot(goal_snpts_global[gt_idx, 0], goal_snpts_global[gt_idx, 1], 'p', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
+
+        # Traj History
+        plt.plot(feature[:,0], feature[:,1], linewidth = 5, color = '#186A3B', alpha= 0.5)
+
+        # Predicted Trajectory
+        for top_k, traj_pred in traj_pred_dict.items():
+            prob = probs[-1-top_k]
+        
+            traj_pred_global = traj_pred[idx] @ R.T + curr
+
+            plt.plot(traj_pred_global[:,0], traj_pred_global[:,1],'.', markersize = 15, color = 'r', alpha= prob)
+        
+        # Ground Truth Future Traj
+        label_global = labels_global[idx].copy()
+        label_global_trans = label_global[:,:2]
+        plt.plot(label_global_trans[:,0], label_global_trans[:,1], linewidth = 5, color = 'b', alpha= 0.5)
 
 
         plt.xlabel('x (m)')
@@ -283,12 +282,15 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
         fig.savefig('./figures/' + case_name + '/frame_%03d.png' % idx)
         plt.close(fig)
 
-    fps = 2
-    mv = os.system("ffmpeg -r {0:d} -i ./figures/{1:s}/frame_%03d.png -vcodec mpeg4 -y ./figures/{1:s}_movie.mp4".format(fps, case_name) )
-    if mv == 0:
-        print( case_name + ": Trajectory movie saved successfully.")
+    if movie:
+        fps = 2
+        mv = os.system("ffmpeg -r {0:d} -i ./figures/{1:s}/frame_%03d.png -vcodec mpeg4 -y ./figures/{1:s}_movie.mp4".format(fps, case_name) )
+        if mv == 0:
+            print( case_name + ": Trajectory movie saved successfully.")
+        else:
+            print( case_name + ": Meet problem saving Trajectorymovie.")
     else:
-        print( case_name + ": Meet problem saving Trajectorymovie.")
+        print(case_name + ": Processed, no movie generated")
 
 def generate_image(parking_size,resolution,img_center,lines):
     
