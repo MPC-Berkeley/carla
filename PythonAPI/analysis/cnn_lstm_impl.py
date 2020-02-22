@@ -22,15 +22,17 @@ import keras.backend as K # for custom loss function
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
-from tfrecord_utils import read_tfrecord, read_gt_tfrecord,_parse_function
+from tfrecord_utils import _parse_function
 import tensorflow as tf
 import glob
 from datetime import datetime
 from tqdm import tqdm
 import time
-import pdb
+
+# This file provides the implementation of the CNN-LSTM used for intent/goal and trajectory prediction.
 
 def cnn_base_network(input_shape, img_feature_dim):
+	# Base network taking in the semantic birds view and returning image features for the LSTM.
 	cnn_model = Sequential()
 	
 	cnn_model.add( Conv2D(16, kernel_size=(3,3), strides=1, activation='relu', input_shape=input_shape,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
@@ -50,24 +52,26 @@ def cnn_base_network(input_shape, img_feature_dim):
 
 class CombinedCNNLSTM(object):
 	def __init__(self, history_shape, goals_position_shape, image_input_shape, one_hot_goal_shape, future_shape, hidden_dim, beta=0.1, gamma=0.1, image_feature_dim=32, use_goal_info=True):
-		traj_input_shape    = (history_shape[1], history_shape[2])
-		goal_input_shape    = (goals_position_shape[1],)
-		n_outputs           = one_hot_goal_shape[1]
-		intent_input_shape  = (n_outputs,)
-		future_horizon      = future_shape[1]
-		future_dim	        = future_shape[2]
+		traj_input_shape    = (history_shape[0], history_shape[1]) # motion history: should be N_hist by state_dim
+		goal_input_shape    = (goals_position_shape[0],)           # occupancy: num_spots by (x_spot, y_spot, is_free) -> flattened to 3 * num_spots
+		n_outputs           = one_hot_goal_shape[0]                # goal/intent classification: num_spots + 1
+		intent_input_shape  = (n_outputs,)                         # intent input to trajectory prediction model: intent input is the same size as the intent classification above.
+		future_horizon      = future_shape[0]                      # future prediction horizon: N_pred
+		future_dim          = future_shape[1]                      # future prediction state dimension: (in our usage, we drop the so state_dim=2 for output)
 
-		self.use_goal_info = use_goal_info
+		self.use_goal_info = use_goal_info # if True, use ground truth intent information while training.  Else zero out the intent label and only learn from motion info.
 		self.goal_model = GoalCNNLSTM(traj_input_shape, goal_input_shape, image_input_shape, n_outputs, beta, gamma, hidden_dim=hidden_dim, img_feature_dim=image_feature_dim)
 		self.traj_model = TrajCNNLSTM(traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=self.use_goal_info, hidden_dim=hidden_dim, img_feature_dim=image_feature_dim)	
 
-	def fit(self, train_set, val_set, num_epochs=100, batch_size=64, verbose=0):
-		self.goal_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
+	def fit(self, train_set, num_epochs=100, batch_size=64, verbose=0):
+		self.goal_model.fit_model(train_set, num_epochs=num_epochs, batch_size=batch_size, \
 		                          verbose=verbose)
-		self.traj_model.fit_model(train_set, val_set, num_epochs=num_epochs, batch_size=batch_size, \
+		self.traj_model.fit_model(train_set, num_epochs=num_epochs, batch_size=batch_size, \
 			                      verbose=verbose)
 
 	def predict(self, test_set, top_k_goal=[]):
+		# top_k_goal, if filled in, can allow for multimodal predictions based on estimated intent.
+		# See predict method of TrajCNNLSTM for details.
 		goal_pred, goal_gt = self.goal_model.predict(test_set)
 		top_idxs = np.argsort(goal_pred,axis=1)
 		traj_pred_dict, traj_gt = self.traj_model.predict(test_set,top_idxs,top_k_goal=top_k_goal)
@@ -117,6 +121,7 @@ class GoalCNNLSTM(object):
 		return loss
 
 	def top_k_acc(self, y_true, y_pred, k=3):
+		# We call this top-n accuracy in the paper, basically accuracy if you get k tries to pick the label based on highest probability guesses.
 		return metrics.top_k_categorical_accuracy(y_true, y_pred, k=3)
 
 	def _create_model(self, traj_input_shape, goal_input_shape, image_input_shape, hidden_dim, n_outputs, img_feature_dim):
@@ -128,16 +133,6 @@ class GoalCNNLSTM(object):
 
 		# Image input.
 		img_hist_input  = Input(shape=(image_input_shape),name="image_history")
-
-		# ---- CNN/LSTM in progress ------
-		# cnn_base = mbnet.MobileNetV2(input_shape=image_input_shape[1:],
-		# 	                         alpha=0.5,
-		# 	                         include_top=False,
-		# 	                         weights='imagenet',
-		# 	                         pooling='max')
-		# for layer in cnn_base.layers:
-		# 	layer.trainable=False
-
 		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim)
 		img_hist_features = TimeDistributed(cnn_base)(img_hist_input)
 		lstm_cnn_inp = concatenate([traj_hist_input,img_hist_features])
@@ -170,8 +165,9 @@ class GoalCNNLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size = 64, verbose=0):
-		self._reset()
+	def fit_model(self, train_set, num_epochs=100, batch_size = 64, verbose=0):
+		# NOTE: model weights are reset to same initialization each time fit is called.
+		self._reset() 
 		dataset = tf.data.TFRecordDataset(train_set)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
@@ -179,10 +175,9 @@ class GoalCNNLSTM(object):
 		dataset = dataset.prefetch(2)	
 
 		for epoch in range(num_epochs):
-			#t0 = time.time()
 			losses = []
 			for image, feature, label, goal in dataset:
-				feature = feature[:,:,:3]
+				feature = feature[:,:,:3] # only pose information from motion history used.
 
 				goal = tf.reshape(goal,(-1,goal.shape[1]*goal.shape[2])) # occupancy
 
@@ -192,7 +187,7 @@ class GoalCNNLSTM(object):
 			    # Convert to one-hot and the last one is undecided (-1)
 				one_hot_goal = to_categorical(goal_idx, num_classes=33) # ground truth goal label
 		
-				train_data = [feature, goal, image/255]
+				train_data = [feature, goal, image/255] # image normalization done here.
 
 				batch_loss = self.model.train_on_batch(
 					      train_data,
@@ -202,7 +197,6 @@ class GoalCNNLSTM(object):
 				losses.append(batch_loss)
 			if verbose:
 				print('\tGoal Epoch %d, Loss %f' % (epoch, np.mean(losses)))
-			#print('CNN goal ',time.time()-t0)
 
 		self.trained = True
 
@@ -243,11 +237,11 @@ class GoalCNNLSTM(object):
 		return goal_pred, goal_gt
 
 class TrajCNNLSTM(object):
-	"""This LSTM generates trajectory predictions condioned on a goal location."""
+	"""This LSTM generates trajectory predictions conditioned on a goal location."""
 	def __init__(self, traj_input_shape, intent_input_shape, image_input_shape, future_horizon, future_dim, use_goal_info=True, hidden_dim=100, img_feature_dim=32):
-		self.trained = False
-		self.use_goal_info = use_goal_info
+		self.use_goal_info = use_goal_info # if true, use intent label in training/prediction.  Else learn on zeroed intent label (i.e. motion information only).
 		self.model = self._create_model(traj_input_shape, intent_input_shape, image_input_shape, hidden_dim, future_horizon, future_dim, img_feature_dim)
+		self.trained = False
 		
 		''' Debug '''
 		#plot_model(self.model,to_file='traj_model.png', show_shapes=True)
@@ -263,19 +257,7 @@ class TrajCNNLSTM(object):
 
 		# Image input.
 		img_hist_input  = Input(shape=(image_input_shape),name="image_history")
-
-		# ---- CNN/LSTM in progress ------
-		# cnn_base = mbnet.MobileNetV2(input_shape=image_input_shape[1:],
-		# 	                         alpha=0.5,
-		# 	                         include_top=False,
-		# 	                         weights='imagenet',
-		# 	                         pooling='max')
-		# for layer in cnn_base.layers:
-		# 	layer.trainable=False
-		
 		cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim)
-		# plot_model(cnn_base, to_file='cnn_base_model.png', show_shapes=True)
-
 		img_hist_features = TimeDistributed(cnn_base)(img_hist_input)
 		lstm_cnn_inp = concatenate([traj_hist_input,img_hist_features])
 		# -----------------------------
@@ -313,9 +295,9 @@ class TrajCNNLSTM(object):
 	def _reset(self):
 		self.model.set_weights(self.init_weights)
 
-	def fit_model(self, train_set, val_set, num_epochs=100, batch_size=64,verbose=0):
+	def fit_model(self, train_set, num_epochs=100, batch_size=64,verbose=0):
+		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
-
 		dataset = tf.data.TFRecordDataset(train_set)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
@@ -323,19 +305,21 @@ class TrajCNNLSTM(object):
 		dataset = dataset.prefetch(2)
 
 		for epoch in range(num_epochs):
-			#t0 = time.time()
 			losses = []
 			for image, feature, label, goal in dataset:
 				
-				feature = feature[:,:,:3]
+				feature = feature[:,:,:3] # only pose information from motion history used.
 				
+				# All intention labels, with shape (batch_size, goal_nums)
 				goal_idx = label[:, 0, -1]
+
+				# Convert to one-hot and the last one is undecided (-1)
 				one_hot_goal = to_categorical(goal_idx, num_classes=33) # ground truth goal label
 
 				if not self.use_goal_info:
-					one_hot_goal = np.zeros_like(one_hot_goal)
+					one_hot_goal = np.zeros_like(one_hot_goal) # intent distribution not used
 
-				train_data = [feature,one_hot_goal,image/255]
+				train_data = [feature,one_hot_goal,image/255] # image normalization done here.
 				
 				batch_loss = self.model.train_on_batch(
 					train_data,
@@ -345,7 +329,6 @@ class TrajCNNLSTM(object):
 				losses.append(batch_loss)
 			if verbose:
 				print('\tTraj Epoch %d, Loss %f' % (epoch, np.mean(losses)))
-			#print('CNN traj ',time.time()-t0)
 
 		self.trained = True
 
@@ -365,7 +348,12 @@ class TrajCNNLSTM(object):
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.batch(1)
 
+		# Dictionary returned with the key equal to the k in top_k_goal.
+		# If unimodal, only a single key = 0 is given.
+		# The value is a trajectory rollout predicted by the model.
 		traj_predict_dict = dict()
+
+		# Ground truth trajectory for comparison.
 		traj_gt = []
 		
 		if not top_k_goal:
@@ -415,43 +403,3 @@ class TrajCNNLSTM(object):
 				traj_predict_dict[k] = np.array(traj_predict_dict[k])
 
 		return traj_predict_dict, np.array(traj_gt)
-
-
-# Testing
-if __name__ == '__main__':
-
-	import os
-	os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-	os.environ["CUDA_VISIBLE_DEVICES"]= "4"
-
-	traj_input_shape    = (5,3)
-	goal_input_shape    = (96,)
-	n_outputs           = 33
-	intent_input_shape  = (33,)
-	future_horizon      = 20
-	future_dim	        = 2
-	image_input_shape = (5,325,100,3)
-
-	beta = 1.0
-	gamma = 1.0
-	
-	# goalcnnlstm_test = GoalCNNLSTM(
-	# traj_input_shape, goal_input_shape,  image_input_shape, n_outputs, beta, gamma, hidden_dim=100)
-
-	# for layer in goalcnnlstm_test.model.layers:
-	# 	print(layer, layer.trainable)
-
-	# trajcnnlstm_test = TrajCNNLSTM(
-	# traj_input_shape, intent_input_shape,  image_input_shape, future_horizon, future_dim)
-
-
-	tmp_input = Input(shape=(image_input_shape[1:]),name="tmp_input")
-
-	cnn_base = cnn_base_network(image_input_shape[1:], img_feature_dim=10)
-	for layer in cnn_base.layers:
-		print(layer, layer.trainable)
-
-	model = Model(tmp_input, cnn_base)
-
-	model.compile(loss='mean_squared_error', optimizer='adam')
-

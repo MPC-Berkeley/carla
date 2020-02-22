@@ -2,11 +2,12 @@ import rosbag
 import matplotlib.pyplot as plt
 from transformations import euler_from_quaternion
 import numpy as np
-import pdb
-#from cv_bridge import CvBridge
+
+# Code Status (as of 2/6/20): this works but is hard-coded for our parking lot experiment.  
+# Some things like Euler angles can be fixed, as well as applying outlier information to every field in the res_dict.
 
 def extract_parking_lines():
-  # Returns hard-coded lane markings for the parking lot map.
+  # Returns hard-coded lane markings for the parking lot map (called exp).
   # Top = horizontal line for the "top" row
   # Bot = horizontal line for the "bottom" row
   # remaining lines are the vertical lines separating parking spots
@@ -49,7 +50,7 @@ def extract_item_xyz(item):
     return [item.x, item.y, item.z]
 
 def extract_roll_pitch_yaw(q):
-    # TODO: It seems this returns heading first.
+    # TODO: It seems this returns heading first, with what is called "r" here.
     
     # Reference this: https://github.com/carla-simulator/ros-bridge/blob/28d4ef607e07d217b873e35aee768d0a11b1bfa5/carla_ros_bridge/src/carla_ros_bridge/transforms.py#L96
     
@@ -57,17 +58,20 @@ def extract_roll_pitch_yaw(q):
     return [r,p,y]
 
 def outlier_removal(res_dict, position_thresh=1.):
-    # Imperfect method, just look for jumps at the end of the rosbag recording.
-    # Check out ego's odometry to get a t_final.
-    # Remove data from other fields which have t > t_final.
-    
-    start_point = np.array([2.85000000e+02, 2.39998810e+02])
+    # Imperfect method to get rid of jumps in data using ego's odometry.
+    # First check we are near the ego spawn point.
+    # Then look for jumps with respect to expected position using velocity info.
+    # position_thresh is the threshold in meters below which we say a jump did not happen.
+
+    start_point = np.array([2.85000000e+02, 2.39998810e+02]) # ego spawn location
     start_time = None; start_ind = None; final_time = None; final_ind = None
     
     for i in range( 1, len(res_dict['ego_odometry_list'])):
         prev_odom = res_dict['ego_odometry_list'][i-1]
         new_odom  = res_dict['ego_odometry_list'][i]
         
+        # TODO: don't need estimated new pose.  This just cares about proximity
+        # to the start point.
         dt = new_odom['time'] - prev_odom['time']
         prev_position = np.array(prev_odom['position'])
         prev_velocity = np.array(prev_odom['linear_velocity'])
@@ -79,7 +83,6 @@ def outlier_removal(res_dict, position_thresh=1.):
         if np.linalg.norm(prev_position[:2] - start_point) < position_thresh:
             start_time = prev_odom['time']
             start_ind = i-1
-            # pdb.set_trace()
             break
             
     if start_time is not None:
@@ -108,38 +111,6 @@ def outlier_removal(res_dict, position_thresh=1.):
         i += 1
 
     res_dict['ego_odometry_list'] = filter_odom
-
-    # for i in range( 1, len(res_dict['ego_odometry_list'])):
-    #     prev_odom = res_dict['ego_odometry_list'][i-1]
-    #     new_odom  = res_dict['ego_odometry_list'][i]
-        
-    #     dt = new_odom['time'] - prev_odom['time']
-    #     prev_position = np.array(prev_odom['position'])
-    #     prev_velocity = np.array(prev_odom['linear_velocity'])
-        
-    #     est_new_position = prev_position + dt * prev_velocity
-        
-    #     new_position = np.array(new_odom['position'])
-        
-    #     if np.linalg.norm(new_position - est_new_position) > position_thresh:
-    #         final_time = prev_odom['time']
-    #         final_ind = i
-    #         # pdb.set_trace()
-    #         break
-    # if final_time is not None:
-    #     print('\tEnd Outlier detected.  Setting final time %.3f vs. last entry at time %.3f for ego odom.' % \
-    #           (final_time, res_dict['ego_odometry_list'][-1]['time'])) 
-
-    #     # Remove the corresponding outliers in ego-odometry, GPS and all other time-varying entries
-    #     res_dict['ego_odometry_list'] = res_dict['ego_odometry_list'][:final_ind]
-        
-        # VG: need to check if these time indices match up with ego_odom.  This will not work for the dictionary.
-        # Commented for now.
-#         res_dict['ego_collision_list']    = res_dict['ego_collision_list'][:final_ind]
-#         res_dict['ego_control_list']      = res_dict['ego_control_list'][:final_ind]
-#         res_dict['ego_gps_list']          = res_dict['ego_gps_list'][:final_ind]
-#         res_dict['vehicle_odometry_dict'] = res_dict['vehicle_odometry_dict'][:final_ind]
-#         res_dict['vehicle_object_lists']  = res_dict['vehicle_object_lists'][:final_ind]
            
 def process_bag(bag):
     b = rosbag.Bag(bag)
@@ -349,17 +320,5 @@ def process_bag(bag):
         obj_entry = [x, y, dx, dy, theta]
         res_dict['static_object_list'].append(obj_entry)
 
-    '''
-    # View just the first image.  This can be done in Python2, issues with Python3 here.
-    image_viewed = False
-    for topic, msg, t in b.read_messages('/carla/camera/rgb/front/image_color'):
-        if image_viewed:
-            break
-        else:
-            bridge = CvBridge()
-            cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
-            plt.imshow(cv_image)
-            image_viewed = True
-    '''
     outlier_removal(res_dict)
     return res_dict

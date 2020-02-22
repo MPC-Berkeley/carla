@@ -6,7 +6,20 @@ import pickle
 from keras.utils import to_categorical
 from PIL import Image
 from PIL import ImageDraw
-import pdb
+
+def fix_angle(diff_ang):
+    while diff_ang > np.pi:
+        diff_ang -= 2 * np.pi
+    while diff_ang < -np.pi:
+        diff_ang += 2 * np.pi
+    assert(-np.pi <= diff_ang and diff_ang <= np.pi)
+    return diff_ang
+
+# Misc. utils below for the following:
+# (1) generating semantic birds eye view images (get_rect, generate_image, generate_image_ego)
+# (2) trajectory visualization (get_parking_lot_image_hist, sup_plot, extract_data, generate_movie)
+
+# TODO: clean up in the future.  Left alone for now as lower priority fix.
 
 def get_parking_lot_image_hist(parking_lot, static_objs, feature, ego_dims, resize_factor=1.0):
     # code for the plotting of the parking lot
@@ -57,14 +70,6 @@ def get_parking_lot_image_hist(parking_lot, static_objs, feature, ego_dims, resi
 
     img_return = np.flip(img_return, axis=1) # flip based on pixel axis to align with map frame (h)
     return img_return
-
-def fix_angle(diff_ang):
-    while diff_ang > np.pi:
-        diff_ang -= 2 * np.pi
-    while diff_ang < -np.pi:
-        diff_ang += 2 * np.pi
-    assert(-np.pi <= diff_ang and diff_ang <= np.pi)
-    return diff_ang
 
 def extract_data(pklfile, full_traj=False, crop_traj=False):
     with open(pklfile, 'rb') as f:
@@ -364,5 +369,3 @@ def generate_image_ego(parking_size,resolution,img_center,lines):
     # Convert the Image data to a numpy array.
     new_data = np.asarray(img)
     return new_data
-
-
