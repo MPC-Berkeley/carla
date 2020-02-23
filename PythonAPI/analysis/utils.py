@@ -240,6 +240,28 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
         probs.sort()
         goal_snpts_global = goal_snpts[idx].copy()
         goal_snpts_global[:, :2] = goal_snpts_global[:, :2] @ R.T + curr
+
+        # Plot the probability distribution
+        for goal_idx in range(len(goal_pred[idx])-1):
+            x_center = goal_snpts_global[goal_idx, 0]
+            y_center = goal_snpts_global[goal_idx, 1]
+
+            spot_w = 5.
+            spot_h = 3.
+
+            if x_center <= 285:
+                rect_w = spot_w * goal_pred[idx, goal_idx]
+                rect_h = spot_h
+                x_left_corner = x_center - spot_w / 2.
+                y_left_corner = y_center - spot_h / 2.
+            else:
+                rect_w = spot_w * goal_pred[idx, goal_idx]
+                rect_h = spot_h
+                x_left_corner = x_center + spot_w / 2. - rect_w
+                y_left_corner = y_center - spot_h / 2.
+
+            rect = patches.Rectangle((x_left_corner, y_left_corner), rect_w, rect_h, 0, facecolor='#7CCC33', alpha=0.5)
+            ax.add_patch(rect)
             
         for top_k in top_k_goal:
             j = np.argsort(goal_pred[idx])[-1-top_k]
