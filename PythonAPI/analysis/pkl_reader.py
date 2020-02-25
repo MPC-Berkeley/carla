@@ -99,7 +99,7 @@ def get_longitudinal_velocity(time, vx, vy, v_prev, ego_control_dict):
             return vel_from_gear
         
 # Function to get full state and intent (goal index) trajectory for a single demonstration.
-def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, min_vel_thresh=0.01, exclude_collisions=False):
+def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, min_vel_thresh=0.01, exclude_collisions=False, min_dis_thresh=5.):
     '''
     prune_start: if True, remove non-moving portion of data at the start
     prune_end:   if True, remove non-moving portion of data at the end
@@ -164,6 +164,13 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     # Goal selection
     final_position = np.array([ ego_x[end_ind], ego_y[end_ind] ])
     goal_ind = np.argmin( np.sum(np.square(goals[:,:2] - final_position), axis=1) )
+
+    if goals[goal_ind, -1] > 0 and np.linalg.norm(goals[goal_ind,:2] - final_position) < min_dis_thresh:
+        pass
+    else:
+        if goals[goal_ind, -1] > 0:
+            pdb.set_trace()
+        raise ValueError("Not ended in a free spot, so skipping this instance.")
 
     ego_intent = [-1 if t < intention_time else goal_ind for t in ego_time]
     switch_ind = [n for n,intent in enumerate(ego_intent) if intent > -1][0]
