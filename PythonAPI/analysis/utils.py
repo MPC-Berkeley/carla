@@ -260,18 +260,21 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
                 x_left_corner = x_center + spot_w / 2. - rect_w
                 y_left_corner = y_center - spot_h / 2.
 
-            rect = patches.Rectangle((x_left_corner, y_left_corner), rect_w, rect_h, 0, facecolor='#7CCC33', alpha=0.5)
+            rect = patches.Rectangle((x_left_corner, y_left_corner), rect_w, rect_h, 0, facecolor='C9', alpha=0.5)
             ax.add_patch(rect)
             
+        colors = ['C1', 'C2', 'C4']
         for top_k in top_k_goal:
             j = np.argsort(goal_pred[idx])[-1-top_k]
             prob = probs[-1-top_k]
 
+            color = colors[top_k]
+            alpha = 1 - 1/(len(top_k_goal)+1) * (top_k + 1)
             # Predicted Goal
             if j == 32:
-                plt.plot(curr[0], curr[1], 'p', color = 'r', markersize = 20, alpha=prob)
+                plt.plot(curr[0], curr[1], 'p', color = color, markersize = 20, alpha=alpha)
             else:
-                plt.plot(goal_snpts_global[j, 0], goal_snpts_global[j, 1], 'p', color = 'r', markersize = 20, alpha=prob)
+                plt.plot(goal_snpts_global[j, 0], goal_snpts_global[j, 1], 'p', color = color, markersize = 20, alpha=alpha)
         
         # Ground Truth Goal
         gt_idx = np.argmax(goal_gt[idx])
@@ -281,15 +284,17 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
             plt.plot(goal_snpts_global[gt_idx, 0], goal_snpts_global[gt_idx, 1], 'p', fillstyle='none', color = 'b', markeredgewidth = 5, markersize = 20)
 
         # Traj History
-        plt.plot(feature[:,0], feature[:,1], linewidth = 5, color = '#186A3B', alpha= 0.5)
+        plt.plot(feature[:,0], feature[:,1], linewidth = 3, color = 'k', alpha= 0.75)
 
         # Predicted Trajectory
-        for top_k, traj_pred in traj_pred_dict.items():
+        for top_k, traj_pred in sorted(traj_pred_dict.items(), reverse=True):
             prob = probs[-1-top_k]
         
             traj_pred_global = traj_pred[idx] @ R.T + curr
 
-            plt.plot(traj_pred_global[:,0], traj_pred_global[:,1],'.', markersize = 15, color = 'r', alpha= prob)
+            color = colors[top_k]
+            alpha = 1 - 1/(len(traj_pred_dict.items())+1) * (top_k + 1)
+            plt.plot(traj_pred_global[:,0], traj_pred_global[:,1],'.', markersize = 15, color = color, alpha= alpha)
         
         # Ground Truth Future Traj
         label_global = labels_global[idx].copy()
