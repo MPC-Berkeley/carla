@@ -142,7 +142,10 @@ class GoalLSTM(object):
 	def fit_model(self, train_set, num_epochs=100, batch_size = 64, verbose=0,):
 		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
-		dataset = tf.data.TFRecordDataset(train_set)
+
+		files = tf.data.Dataset.from_tensor_slices(train_set)
+		files = files.shuffle(256, reshuffle_each_iteration=True)
+		dataset = files.interleave(lambda x: tf.data.TFRecordDataset(x), cycle_length=2, block_length=32)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
 		dataset = dataset.batch(batch_size)	
@@ -264,7 +267,10 @@ class TrajLSTM(object):
 	def fit_model(self, train_set, num_epochs=100, batch_size=64,verbose=0):
 		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
-		dataset = tf.data.TFRecordDataset(train_set)
+		
+		files = tf.data.Dataset.from_tensor_slices(train_set)
+		files = files.shuffle(256, reshuffle_each_iteration=True)
+		dataset = files.interleave(lambda x: tf.data.TFRecordDataset(x), cycle_length=2, block_length=32)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
 		dataset = dataset.batch(batch_size)

@@ -35,19 +35,21 @@ def cnn_base_network(input_shape, img_feature_dim):
 	# Base network taking in the semantic birds view and returning image features for the LSTM.
 	cnn_model = Sequential()
 	
-	cnn_model.add( Conv2D(16, kernel_size=(3,3), strides=1, activation='relu', input_shape=input_shape,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
+	cnn_model.add( Conv2D(8, kernel_size=(3,3), strides=1, activation='relu', input_shape=input_shape, kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
 	cnn_model.add( MaxPooling2D(pool_size=(2,2)) )
-	cnn_model.add( Dropout(0.1) )
+	cnn_model.add( BatchNormalization() )
 
-	cnn_model.add( Conv2D(32, kernel_size=(3,3), strides=2, activation='relu',kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
+	cnn_model.add( Conv2D(16, kernel_size=(3,3), strides=2, activation='relu', kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
 	cnn_model.add( MaxPooling2D(pool_size=(2,2)) )
-	cnn_model.add( Dropout(0.1) )
+	cnn_model.add( BatchNormalization() )
 	
 	cnn_model.add( Flatten() )
+	cnn_model.add( Dropout(0.5) )
+
 	cnn_model.add( Dense(128,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
-	cnn_model.add( Dropout(0.2) )
-	cnn_model.add( Dense(img_feature_dim,kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
-	cnn_model.add( BatchNormalization())
+	cnn_model.add( Dropout(0.5) )
+
+	cnn_model.add( Dense(img_feature_dim, kernel_regularizer=l2(1e-3), bias_regularizer=l2(1e-3)) )
 	return cnn_model
 
 class CombinedCNNLSTM(object):
@@ -168,7 +170,10 @@ class GoalCNNLSTM(object):
 	def fit_model(self, train_set, num_epochs=100, batch_size = 64, verbose=0):
 		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset() 
-		dataset = tf.data.TFRecordDataset(train_set)
+		
+		files = tf.data.Dataset.from_tensor_slices(train_set)
+		files = files.shuffle(256, reshuffle_each_iteration=True)
+		dataset = files.interleave(lambda x: tf.data.TFRecordDataset(x), cycle_length=2, block_length=32)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
 		dataset = dataset.batch(batch_size)	
@@ -298,7 +303,10 @@ class TrajCNNLSTM(object):
 	def fit_model(self, train_set, num_epochs=100, batch_size=64,verbose=0):
 		# NOTE: model weights are reset to same initialization each time fit is called.
 		self._reset()
-		dataset = tf.data.TFRecordDataset(train_set)
+		
+		files = tf.data.Dataset.from_tensor_slices(train_set)
+		files = files.shuffle(256, reshuffle_each_iteration=True)
+		dataset = files.interleave(lambda x: tf.data.TFRecordDataset(x), cycle_length=2, block_length=32)
 		dataset = dataset.map(_parse_function)
 		dataset = dataset.shuffle(10*batch_size, reshuffle_each_iteration=True)
 		dataset = dataset.batch(batch_size)		
