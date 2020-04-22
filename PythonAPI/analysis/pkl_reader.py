@@ -166,10 +166,8 @@ def extract_full_trajectory(res_dict, goals, prune_start=True, prune_end=True, m
     goal_ind = np.argmin( np.sum(np.square(goals[:,:2] - final_position), axis=1) )
 
     if goals[goal_ind, -1] > 0 and np.linalg.norm(goals[goal_ind,:2] - final_position) < min_dis_thresh:
-        pass
+        pass # The demonstration ended close to a free spot so valid parking example.
     else:
-        if goals[goal_ind, -1] > 0:
-            pdb.set_trace()
         raise ValueError("Not ended in a free spot, so skipping this instance.")
 
     ego_intent = [-1 if t < intention_time else goal_ind for t in ego_time]
