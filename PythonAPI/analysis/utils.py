@@ -299,7 +299,7 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
         # Ground Truth Future Traj
         label_global = labels_global[idx].copy()
         label_global_trans = label_global[:,:2]
-        plt.plot(label_global_trans[:,0], label_global_trans[:,1], linewidth = 5, color = 'b', alpha= 0.5)
+        plt.plot(label_global_trans[:,0], label_global_trans[:,1], linewidth = 5, color = 'b', alpha= 1)
 
 
         plt.xlabel('x (m)')
