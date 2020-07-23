@@ -10,6 +10,9 @@ import copy
 # extract_goals assumes vehicles lie in a nice xy grid and we don't have outliers.  
 # Works fine but fails if the data collected has issues (stale ego vehicle hanging around, no intention pressed, etc.).
 
+# This code is provided for reference, let us know if you need to use it - else you can just start from the
+# tfrecord dataset which has already been processed.
+
 # Function to get all possible goals, along with occupancy.
 # Each goal is an array [x,y,free].
 def extract_goals(res_dict):
@@ -27,7 +30,7 @@ def extract_goals(res_dict):
     for idx, x in enumerate(xg):
         for y in yg:
             if idx == 0 or idx == len(xg) - 1:
-                continue # we are limiting in this case to the middle two parking columns
+                continue # we are limiting in this case to the middle two parking rows
             diffs = np.sum(np.square( occupied_spots - np.array([x,y]) ), axis= 1)
             if np.min(diffs) < 1e-6:
                 goals.append([x,y,0]) # near a vehicle, hence occupied
@@ -190,7 +193,7 @@ def interpolate_ego_trajectory(ego_trajectory, t_interp, switch_ind, include_int
             # treat the entire snippet as if the goal is known.
             intent = ego_trajectory[switch_ind, 6] * np.ones(x_interp.shape)
         else:
-            intent = -1 * np.ones(x_interp.shape)
+            intent = -1 * np.ones(x_interp.shape) # -1 means undetermined intent
             
         return np.column_stack((x_interp, y_interp, heading_interp, v_interp, yawrate_interp, intent))
     else:

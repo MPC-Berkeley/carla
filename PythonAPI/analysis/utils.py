@@ -8,6 +8,7 @@ from PIL import Image
 from PIL import ImageDraw
 
 def fix_angle(diff_ang):
+    # Brings a given angle/difference of angles in the range [-pi, pi].
     while diff_ang > np.pi:
         diff_ang -= 2 * np.pi
     while diff_ang < -np.pi:
@@ -15,17 +16,22 @@ def fix_angle(diff_ang):
     assert(-np.pi <= diff_ang and diff_ang <= np.pi)
     return diff_ang
 
-# Misc. utils below for the following:
-# (1) generating semantic birds eye view images (get_rect, generate_image, generate_image_ego)
-# (2) trajectory visualization (get_parking_lot_image_hist, sup_plot, extract_data, generate_movie)
-
-# TODO: clean up in the future.  Left alone for now as lower priority fix.
+# Misc. utils below for generating semantic birds eye view images (get_rect, generate_image, generate_image_ego).
+# The main things to use is get_parking_lot_image_hist, which does involve some hardcoding but can be adapted as needed.
 
 def get_parking_lot_image_hist(parking_lot, static_objs, feature, ego_dims, resize_factor=1.0):
-    # code for the plotting of the parking lot
-    ''' 
-    Scene Image construction. Resolution/Image Params hardcoded for now.
-    '''
+    # Generates I_hist in the paper, the semantic birds eye view history of the parking lot.  Resolution/Image Params hardcoded for now.
+    # This is a set of  3-channel images, channel 1 = parking lines, channel 2 = static vehicle bounding boxes, channel 3 = ego vehicle bounding box.
+    # In this experiment, only channel 3 changes because we assume channel 1 and 2 are static and constant environment settings.
+    # The number of features (i.e. poses) corresponds to the number of images in the history that are returned.
+
+    # You can understand the data format by looking at the following link and referring to usage in dataset_generator.ipynb.
+    # https://github.com/MPC-Berkeley/carla/blob/3c8e32432c76cc1ec1937ff11085402e0bc7fc65/PythonAPI/analysis/bag_reader.py#L290
+    # Roughly, parking_lot contains the parking lines encoded as bounding boxes.
+    # static_objs contains the bounding boxes of the parked vehicles
+    # feature is the set of ego poses we would like to draw with ego dims for the bbox dimensions.
+    # resize_factor is used to tune the final resolution of the image (i.e. the height and width).
+
     # Get center point (x,y) of the parking lot
     x0 = np.mean([min(x[0] for x in parking_lot),max(x[0] for x in parking_lot)])
     y0 = np.mean([min(x[1] for x in parking_lot),max(x[1] for x in parking_lot)])
@@ -40,9 +46,10 @@ def get_parking_lot_image_hist(parking_lot, static_objs, feature, ego_dims, resi
 
     num_imgs = len(feature)
     img_hist = np.zeros((num_imgs, h, w, 3), dtype=np.uint8)
-    img_hist[:,:,:,0] = generate_image(parking_size,res,img_center,parking_lot)
-    img_hist[:,:,:,1] = generate_image(parking_size,res,img_center,static_objs)
+    img_hist[:,:,:,0] = generate_image(parking_size,res,img_center,parking_lot) # parking lines
+    img_hist[:,:,:,1] = generate_image(parking_size,res,img_center,static_objs) # static vehicle bboxes
 
+    # ego pose, only thing that changes in the image history per timestep
     for ind_p, ego_pose in enumerate(feature):
         ego_bb = [ego_pose[0],         # x
                   ego_pose[1],         # y
@@ -325,7 +332,9 @@ def generate_movie(case_name, parking_lot, static_object_list, traj_pred_dict, f
         print(case_name + ": Processed, no movie generated")
 
 def generate_image(parking_size,resolution,img_center,lines):
-    
+    # Given a parking lot description, image resolution, location of the center pixel, and some bboxes,
+    # we provide a 1-channel binary image encoding this information.
+
     # Total parking lot dimensions to consider
     dX, dY = parking_size
     
@@ -339,13 +348,16 @@ def generate_image(parking_size,resolution,img_center,lines):
     # Base image
     img = np.zeros((h,w),np.uint8)
     
-    # Loop over parking lines
+    # Loop over parking lines (or bounding boxes in general):
     for x_center,y_center,dx,dy,th in lines:
         
         # pixel width in x and y dimension
         dxp,dyp = int(np.round(dx/resolution)),int(np.round(dy/resolution))
         x1,y1 = int(np.round(xp(x_center)-dxp/2)),int(np.round(yp(y_center)-dyp/2))
         x2,y2 = int(np.round(xp(x_center)+dxp/2)),int(np.round(yp(y_center)+dyp/2))
+
+        # we ignore the orientation (th) here, as this is used for obstacles that are aligned with the x or y axes.
+        # the general case of a rotated bbox is handled in the generate_image_ego function.
 
         if x1 < 0 or x2 < 0:
             continue
@@ -367,6 +379,9 @@ def get_rect(x, y, width, height, angle):
     return transformed_rect
 
 def generate_image_ego(parking_size,resolution,img_center,lines):
+    # Given a parking lot description, image resolution, location of the center pixel, and some bboxes,
+    # we provide a 1-channel binary image encoding this information.  Here we consider orientation,
+    # as only the ego vehicle can have a rotated (i.e. theta s.t theta != 0 and theta != np.pi) bbox.
     
     # Total parking lot dimensions to consider
     dX, dY = parking_size
