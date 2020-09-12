@@ -74,6 +74,11 @@ def main():
         client = carla.Client(args.host, args.port)
         client.set_timeout(60.0)
 
+        # Set static Specator View.  For dynamic view, we need to use ego's pose.
+        spectator = client.get_world().get_spectator()
+        spectator.set_transform( carla.Transform(carla.Location(x=285.0, y=-210.0, z=30.0), carla.Rotation(yaw=0.0, pitch=-90)) )
+        #
+
         client.set_replayer_time_factor(args.time_factor)
         print(client.replay_file(args.recorder_filename, args.start, args.duration, args.camera))
 
